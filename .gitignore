@@ -1,0 +1,15 @@
+.DS_Store
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/target-windows/
+src-tauri/resources/media/
+src-tauri/resources/media-windows/
+src-tauri/resources/media-intel/
+artifacts/
+test-results/
+playwright-report/
+*.log
+*.tsbuildinfo
+__pycache__/
+src-tauri/gen/
