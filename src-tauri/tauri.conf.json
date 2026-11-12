@@ -1,0 +1,32 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Dropper",
+  "version": "0.2.0",
+  "identifier": "app.dropper.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "title": "드롭퍼", "width": 920, "height": 780,
+      "minWidth": 720, "minHeight": 560,
+      "backgroundColor": "#f7f8f5"
+    }],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost data:; style-src 'self' 'unsafe-inline'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg", "nsis"],
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.icns", "icons/icon.ico"],
+    "resources": [],
+    "category": "Video",
+    "shortDescription": "영상의 무게를 덜어내다",
+    "macOS": { "minimumSystemVersion": "26.0" },
+    "windows": { "nsis": { "displayLanguageSelector": false, "languages": ["Korean"] } }
+  }
+}

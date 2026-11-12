@@ -1,0 +1,7 @@
+{
+  "publisher": "FFmpeg-Builds/FFmpeg-Builds (formerly BtbN)",
+  "asset": "ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
+  "url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
+  "sha256": "eeca861b84c286f6e789b10bcf0c4bb8fcb432ef9f4e5397fc9ed192e665a7aa",
+  "note": "Checksum-pinned asset. If latest is replaced, checksum failure requires an explicit version update; never silently accept it."
+}

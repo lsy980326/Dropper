@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "드롭퍼의 로컬 파일 선택과 작업 상태 이벤트",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:allow-open"]
+}

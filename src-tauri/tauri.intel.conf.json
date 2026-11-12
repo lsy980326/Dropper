@@ -1,0 +1,6 @@
+{
+  "bundle": {
+    "resources": {"resources/media/":null,"resources/media-intel/":"media/"},
+    "macOS": {"minimumSystemVersion":"12.0"}
+  }
+}
