@@ -22,7 +22,21 @@ for(const [name,info] of Object.entries(spec)){
   const data=await readFile(archive);
   if(createHash('sha256').update(data).digest('hex')!==info.sha256)throw new Error(`${name} cached archive checksum mismatch`);
   const result=spawnSync('python3',['-c',
-    "import sys,zipfile;from pathlib import Path;z=zipfile.ZipFile(sys.argv[1]);m=[i for i in z.infolist() if Path(i.filename).name==sys.argv[2]];assert len(m)==1;Path(sys.argv[3]).write_bytes(z.read(m[0]))",
+    `import sys,zipfile
+from pathlib import Path
+z=zipfile.ZipFile(sys.argv[1])
+m=[i for i in z.infolist() if Path(i.filename).name==sys.argv[2]]
+assert len(m)==1, 'Expected exactly one engine binary'
+notices={i.filename:i for i in z.infolist() if '/' not in i.filename and i.filename.startswith(('LICENSE','COPYING','NOTICE'))}
+for required in ('LICENSE.txt','NOTICE-sources.md'):
+    if required not in notices:raise RuntimeError('Missing '+required)
+target=Path(sys.argv[3])
+for name,info in notices.items():
+    destination=target.parent/name
+    data=z.read(info)
+    if destination.exists() and destination.read_bytes()!=data:raise RuntimeError('Conflicting notice '+name)
+    destination.write_bytes(data)
+target.write_bytes(z.read(m[0]))`,
     archive,name,join(folder,name)],{encoding:'utf8'});
   if(result.status!==0)throw new Error(result.stderr);
   await chmod(join(folder,name),0o755);

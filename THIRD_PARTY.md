@@ -1,16 +1,26 @@
-# Third-party components
+# 외부 구성 요소와 엔진 소스
 
-Dropper는 FFmpeg/ffprobe와 코덱 라이브러리를 동봉해 로컬에서 영상을 처리합니다. 기본 x264/x265 구성을 포함한 FFmpeg 바이너리는 GPL 조건을 따릅니다. 각 외부 구성 요소는 원래 라이선스를 유지합니다. 앱 자체 소스의 공개·배포 라이선스는 아직 정하지 않았습니다.
+Dropper는 FFmpeg/ffprobe를 별도 프로세스로 실행합니다. 동봉된 FFmpeg와 x264/x265 구성은 GPL 조건을 따르며, 각 구성 요소의 원래 라이선스·저작권 고지를 유지합니다. 앱 자체 코드의 라이선스는 별도로 지정하지 않았습니다.
 
-- FFmpeg: https://ffmpeg.org/ · https://ffmpeg.org/legal.html · https://ffmpeg.org/download.html
-- x264: https://www.videolan.org/developers/x264.html
-- x265: https://www.videolan.org/developers/x265.html
-- SVT-AV1: https://gitlab.com/AOMediaCodec/SVT-AV1
-- Tauri: https://github.com/tauri-apps/tauri (MIT/Apache-2.0)
-- React: https://github.com/facebook/react (MIT)
-- Lucide: https://lucide.dev/license (ISC)
-- Intel macOS 정적 엔진 제공자: https://evermeet.cx/ffmpeg/ (FFmpeg 공식 다운로드 페이지의 링크). 버전·SHA-256은 `scripts/mac-intel-media.json`에 기록한다.
+## v0.2.0 대응 소스 다운로드
 
-`scripts/bundle-media.py`는 설치된 엔진과 비시스템 동적 라이브러리의 복사본만 변경합니다. 생성 폴더의 `manifest.json`에 SHA-256과 로컬 출처가, `licenses/`에 발견된 라이선스·엔진 빌드 정보가 포함됩니다. 이는 외부 배포용 완전한 대응 소스 패키지를 대신하지 않습니다.
+설치 파일과 같은 [v0.2.0 릴리스](https://github.com/lsy980326/Dropper/releases/tag/v0.2.0)에서 소스·패치·빌드 방법·고지·체크섬을 추가 비용 없이 받습니다.
 
-바이너리 배포 시에는 실제 포함한 각 라이브러리의 라이선스 고지와 해당 버전의 대응 소스·빌드 스크립트 제공 조건을 확인해야 합니다. 설치 파일은 GitHub Releases에서 제공하며 패키지 크기·최소 OS 버전은 실제 동봉한 엔진의 구성에 따라 달라집니다.
+| 설치 파일 | FFmpeg 엔진 | 대응 소스 |
+|---|---|---|
+| Mac Apple Silicon | 8.0.1 · Homebrew 8.0.1_4 | [macOS 소스 묶음](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_macOS_engine_sources.tar.gz) |
+| Mac Intel · 재패키징 | 8.0.1 · 자체 정적 빌드 | [macOS 소스 묶음](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_macOS_engine_sources.tar.gz) |
+| Windows x64 | n8.1.3-35-gf1acb0a266 | [Windows 소스 묶음](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_Windows_engine_sources.tar.gz) + [OpenSSL 원본 소스](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_Windows_OpenSSL_sources.tar.xz) |
+
+macOS 묶음은 실제 버전의 원본 소스, Homebrew 레시피와 패치, 자체 Intel 빌드 스크립트, 라이선스·저작권 고지를 포함합니다. Intel의 이전 Evermeet 엔진은 제공자의 패치·소스를 충분히 대조할 수 없어 소스가 확인되는 자체 빌드로 교체했습니다.
+
+Windows 소스는 파일당 2GiB 제한 때문에 **기본 묶음과 OpenSSL 원본 소스 두 파일 모두** 받아야 합니다. 기본 묶음의 `README.md`와 `external-source.json`에 배치·검증 방법이 있습니다. 두 파일은 공식 빌드 실행의 소스 캐시 97개, 정확한 FFmpeg 커밋, 제공자 빌드 스크립트·패치, 추가 Rust 의존성 소스와 빌드 중 내려받은 보조 소스를 포함합니다. 원래 고지와 라이선스는 해당 소스에 보존합니다. GCC 런타임 고지와 Runtime Library Exception도 함께 제공합니다.
+
+각 소스 묶음의 `README.md`에 버전·재빌드 방법과 검증 범위를 안내합니다. 소스 묶음 안의 `SHA256SUMS`와 릴리스의 체크섬 파일로 무결성을 확인할 수 있습니다. 설치 파일을 제공하는 동안 대응 소스도 유지하며, 다른 엔진으로 배포할 때는 그 버전에 맞는 소스·고지를 새로 준비해야 합니다.
+
+## 원 프로젝트
+
+- [FFmpeg](https://ffmpeg.org/) · [라이선스 안내](https://ffmpeg.org/legal.html) · [GPL v3 §6(d)](https://www.gnu.org/licenses/gpl-3.0.html#section6)
+- [x264](https://www.videolan.org/developers/x264.html) · [x265](https://www.videolan.org/developers/x265.html) · [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1) · [dav1d](https://code.videolan.org/videolan/dav1d)
+- [Windows FFmpeg 빌드 제공자](https://github.com/FFmpeg-Builds/FFmpeg-Builds) · [GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html)
+- [Tauri](https://github.com/tauri-apps/tauri) (MIT/Apache-2.0) · [React](https://github.com/facebook/react) (MIT) · [Lucide](https://lucide.dev/license) (ISC)
