@@ -1,12 +1,12 @@
 {
   "ffmpeg": {
-    "url": "https://evermeet.cx/ffmpeg/ffmpeg-9.0.2.zip",
-    "bytes": 26198325,
-    "sha256": "4acc0be580f9b2788029eb7bd4d645ff87968911b0a62aeeb3940d42d54558d5"
+    "url": "https://github.com/lsy980326/Dropper/releases/download/v0.2.0/ffmpeg-8.0.1-dropper-intel.zip",
+    "bytes": 19541767,
+    "sha256": "893a1a06b7831fcc11139f1691a4bb319aa2de2dc0ee1cf5e4047a4cd40dd6a3"
   },
   "ffprobe": {
-    "url": "https://evermeet.cx/ffmpeg/ffprobe-9.0.2.zip",
-    "bytes": 26104193,
-    "sha256": "24a9c968cd4da72d99c7245e914b921815835eb6dff01d99868031aebaf1d439"
+    "url": "https://github.com/lsy980326/Dropper/releases/download/v0.2.0/ffprobe-8.0.1-dropper-intel.zip",
+    "bytes": 19447430,
+    "sha256": "b8c506e51ecf1735c8870c8ba547a512b029c95385d1c1d8b600d300f1c4905b"
   }
 }

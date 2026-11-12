@@ -1,0 +1,42 @@
+[
+  {
+    "file": "Dropper_0.2.0_macOS_AppleSilicon.dmg",
+    "bytes": 18821416,
+    "sha256": "f463d3c13d1b38d24aef7d632f309a63c68f42a70a03ad25f7b02b56665ac3c8"
+  },
+  {
+    "file": "Dropper_0.2.0_Windows_x64_setup.exe",
+    "bytes": 97139775,
+    "sha256": "0793492ac530a1ed891b93a1b718472fafa7d1c4edce2deebaf37e99d0f00854"
+  },
+  {
+    "file": "Dropper_0.2.0_Windows_OpenSSL_sources.tar.xz",
+    "bytes": 444213024,
+    "sha256": "b32cb7e606d36eccd80ccc74288463d6b9c63649e94e58b4a0175a937871618a"
+  },
+  {
+    "file": "Dropper_0.2.0_Windows_engine_sources.tar.gz",
+    "bytes": 1779562672,
+    "sha256": "5b198c610408d289d9708ac392c8ba37d85cb3a846b3dac5fbb166a9ed1fe3d1"
+  },
+  {
+    "file": "Dropper_0.2.0_macOS_Intel.dmg",
+    "bytes": 48336019,
+    "sha256": "f153a15fca3ce3e797fccba784a50eebcf2788548c3a4c332f28cc00905210b4"
+  },
+  {
+    "file": "Dropper_0.2.0_macOS_engine_sources.tar.gz",
+    "bytes": 100345642,
+    "sha256": "3aeec8e58e048aab8246476b89eeecc01b02097e2c1d71ee37b54f11d7a01b6e"
+  },
+  {
+    "file": "ffmpeg-8.0.1-dropper-intel.zip",
+    "bytes": 19541767,
+    "sha256": "893a1a06b7831fcc11139f1691a4bb319aa2de2dc0ee1cf5e4047a4cd40dd6a3"
+  },
+  {
+    "file": "ffprobe-8.0.1-dropper-intel.zip",
+    "bytes": 19447430,
+    "sha256": "b8c506e51ecf1735c8870c8ba547a512b029c95385d1c1d8b600d300f1c4905b"
+  }
+]
