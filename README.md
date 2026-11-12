@@ -34,17 +34,19 @@
 
 ## 설치 파일과 지원 상태
 
-| 대상 | 파일 | 현재 상태 |
-|---|---|---|
-| macOS 26 이상 · Apple Silicon | `src-tauri/target/release/bundle/dmg/Dropper_0.2.0_aarch64.dmg` | 앱 실행 및 실제 UI 압축 흐름 확인 |
-| Windows x64 | `artifacts/Dropper_0.2.0_x64-setup.exe` | 교차 컴파일·NSIS 생성, Windows 설치/실행 미검증 |
-| macOS 12 이상 · Intel | `src-tauri/target/x86_64-apple-darwin/release/bundle/dmg/Dropper_0.2.0_x64.dmg` | Intel 앱·엔진·DMG 생성, 실제 실행 미검증 |
+**[v0.2.0 릴리스에서 설치 파일 다운로드](https://github.com/lsy980326/Dropper/releases/tag/v0.2.0)**
 
-위 경로는 빌드 시 생성되는 위치이며 Git에는 설치 파일·엔진 바이너리·빌드 캐시를 포함하지 않습니다. 로컬 생성물을 정리한 뒤에는 아래 준비·빌드 명령으로 다시 생성할 수 있습니다.
+| 대상 | 다운로드 | 현재 상태 |
+|---|---|---|
+| macOS 26 이상 · Apple Silicon | [Mac Apple Silicon용 DMG](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_macOS_AppleSilicon.dmg) | 앱 실행 및 실제 UI 압축 흐름 확인 |
+| Windows x64 | [Windows x64용 설치 EXE](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_Windows_x64_setup.exe) | 교차 컴파일·NSIS 생성, Windows 설치/실행 미검증 |
+| macOS 12 이상 · Intel | [Mac Intel용 DMG](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_macOS_Intel.dmg) | Intel 앱·엔진·DMG 생성, 실제 실행 미검증 |
+
+설치 파일은 GitHub Releases에서 배포하며 Git 소스 이력에는 설치 파일·엔진 바이너리·빌드 캐시를 포함하지 않습니다. 로컬 생성물을 정리한 뒤에는 아래 준비·빌드 명령으로 다시 생성할 수 있습니다.
 
 현재 **Apple Silicon** 번들의 Homebrew FFmpeg와 동적 라이브러리는 **macOS 26 이상**을 요구합니다. 앱의 최소 OS 버전도 이에 맞췄습니다. Intel 별도 빌드는 정적 x86_64 엔진을 사용하고 macOS 12 이상을 대상으로 합니다. 각 아키텍처용 설치 파일을 선택해 주세요. 기존 드롭퍼가 실행 중이면 종료한 뒤 새 설치 파일을 여세요.
 
-설치 파일은 개인 로컬 사용을 위한 **인증서 서명·Apple 공증을 하지 않은 빌드**입니다. 외부 게시나 스토어 등록은 수행하지 않았습니다. Windows 설치 프로그램은 사용자 계정의 앱 폴더에 설치하며 WebView2가 없을 때 공식 Microsoft 설치 도우미를 실행합니다. 이 최초 런타임 준비에는 인터넷이 필요할 수 있습니다. 이후 영상 압축은 로컬에서 수행합니다.
+설치 파일은 **인증서 서명·Apple 공증을 하지 않은 빌드**입니다. GitHub Releases에서 제공하며 스토어 등록은 수행하지 않았습니다. Windows 설치 프로그램은 사용자 계정의 앱 폴더에 설치하며 WebView2가 없을 때 공식 Microsoft 설치 도우미를 실행합니다. 이 최초 런타임 준비에는 인터넷이 필요할 수 있습니다. 이후 영상 압축은 로컬에서 수행합니다.
 
 ## 영상 형식과 보존 정책
 
