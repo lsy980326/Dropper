@@ -61,6 +61,8 @@ def verify_bundle(app,architecture,minimum,version):
     return executable
 
 def verify_startup(executable):
+    # Tauri rejects symlinks in executable ancestors; /var is one on macOS.
+    executable=executable.resolve(strict=True)
     try:
         with socket.create_connection(('127.0.0.1',1420),timeout=1):
             raise RuntimeError('A development server must not mask a broken installer')

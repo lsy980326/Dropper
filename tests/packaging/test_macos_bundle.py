@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch,MagicMock
 
 SCRIPT=Path(__file__).resolve().parents[2]/'scripts/verify-macos-installer.py'
 
@@ -55,5 +56,14 @@ class MacBundleTests(unittest.TestCase):
                 module.verify_dependency(name,binary,root)
             for name in ['/opt/homebrew/lib/libavcodec.dylib','@loader_path/../../../../outside','@rpath/missing.dylib']:
                 with self.assertRaises(RuntimeError):module.verify_dependency(name,binary,root)
+
+    def test_native_startup_uses_a_canonical_path_for_tauri_security_checks(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);real=root/"real";real.mkdir();binary=real/"dropper";binary.write_bytes(b"fixture")
+            link=root/"link";link.symlink_to(real,target_is_directory=True)
+            module=self.load();process=MagicMock();process.poll.return_value=None
+            with patch.object(module.socket,"create_connection",side_effect=OSError),patch.object(module.time,"sleep"),patch.object(module,"run",return_value="window exists"),patch.object(module.subprocess,"Popen",return_value=process) as spawn:
+                module.verify_startup(link/"dropper")
+            self.assertEqual(spawn.call_args.args[0],[str(binary.resolve())])
 
 if __name__=='__main__':unittest.main()
