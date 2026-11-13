@@ -5,7 +5,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import type { Codec, FileItem, JobEvent, Settings } from './model';
 
 export const desktop = isTauri();
-export type Environment = {ready:boolean;source:string;codecs:Codec[];error:string|null};
+export type Environment = {ready:boolean;source:string;codecs:Codec[];error:string|null;cpuThreads:number;gpuEncoders:Array<{codec:Codec;backend:'nvidia'|'intel'|'amd'|'apple'}>};
 export type ImportProgress = {runId:number;stage:'scanning'|'analyzing';found:number;checked:number};
 export type ImportResult = {files:FileItem[];warnings:string[];skippedResults:number;skippedLinks:number;cancelled:boolean;folderCount:number};
 export const extensions = ['mp4','mov','mkv','avi','webm','wmv','flv','mpeg','mpg','ts','mts','m2ts','m4v','3gp'];

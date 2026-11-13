@@ -45,7 +45,10 @@ jobs:
           python scripts/bundle-media.py --windows --source-dir artifacts/windows-media --output src-tauri/resources/media-windows
           "$pwd\artifacts\windows-media" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
       - name: Core tests on Windows
-        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          python -c "import subprocess; p=subprocess.run(['ffmpeg','-hide_banner','-loglevel','error','-f','lavfi','-i','color=size=256x144:rate=30','-frames:v','3','-c:v','libsvtav1','-svtav1-params','lp=1','-f','null','-'],capture_output=True,text=True); print(p.stderr); p.check_returncode()"
+          cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
       - name: Reject a release that would use the development server
         run: |
           $PSNativeCommandUseErrorActionPreference = $false
@@ -61,9 +64,9 @@ jobs:
       - name: Verify upgrade from the previous installer
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          gh release download v0.2.0 --pattern Dropper_0.2.0_Windows_x64_setup.exe --dir artifacts/previous
-          $old = 'artifacts/previous/Dropper_0.2.0_Windows_x64_setup.exe'
-          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0793492ac530a1ed891b93a1b718472fafa7d1c4edce2deebaf37e99d0f00854') { throw 'Previous installer checksum mismatch' }
+          gh release download v0.2.1 --pattern Dropper_0.2.1_Windows_x64_setup.exe --dir artifacts/previous
+          $old = 'artifacts/previous/Dropper_0.2.1_Windows_x64_setup.exe'
+          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd68e10c35b8c901b23e41b083a7549f029ac1aa0633fc712abb3f161af1bb189') { throw 'Previous installer checksum mismatch' }
           $process = Start-Process -FilePath $old -ArgumentList '/S' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Previous installer exited $($process.ExitCode)" }
           $version = (Get-Content package.json | ConvertFrom-Json).version

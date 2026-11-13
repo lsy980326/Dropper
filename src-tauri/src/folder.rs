@@ -189,7 +189,15 @@ impl FolderSource {
             match fs::symlink_metadata(&current){
                 Ok(meta) if meta.is_dir()&&!meta.file_type().is_symlink()=>{},
                 Ok(_)=>return Err("결과 폴더 경로에 파일 또는 심볼릭 링크가 있습니다. 다른 저장 위치를 선택해 주세요.".into()),
-                Err(error) if error.kind()==std::io::ErrorKind::NotFound=>fs::create_dir(&current).map_err(|e|format!("결과 폴더를 만들지 못했습니다: {e}"))?,
+                Err(error) if error.kind()==std::io::ErrorKind::NotFound=>match fs::create_dir(&current) {
+                    Ok(())=>{},
+                    // Another batch worker may create the shared parent first.
+                    Err(error) if error.kind()==std::io::ErrorKind::AlreadyExists=>{
+                        let meta=fs::symlink_metadata(&current).map_err(|e|format!("결과 폴더를 확인하지 못했습니다: {e}"))?;
+                        if !meta.is_dir()||meta.file_type().is_symlink(){return Err("결과 폴더 경로에 파일 또는 심볼릭 링크가 있습니다. 다른 저장 위치를 선택해 주세요.".into());}
+                    },
+                    Err(error)=>return Err(format!("결과 폴더를 만들지 못했습니다: {error}")),
+                },
                 Err(error)=>return Err(format!("결과 폴더를 확인하지 못했습니다: {error}")),
             }
         }

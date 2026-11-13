@@ -87,6 +87,9 @@ h1{font-size:28px;font-weight:650;line-height:1.3;letter-spacing:-.8px;margin:0 
 .quality-description{color:var(--muted);font-size:11px}
 .recommended{font-size:9px;color:var(--accent);background:#dbeade;border-radius:4px;padding:1px 5px;font-weight:500}
 .advanced{margin-top:15px}
+.processing-note{margin:10px 0 0;font-size:11px;color:var(--muted)}
+.file-meta .backend-label{color:var(--accent);font-weight:600}
+.row-engine-note{margin:6px 0 0;font-size:10px;line-height:1.5;color:var(--muted)}
 .advanced>summary{display:flex;align-items:center;gap:5px;color:var(--muted);font-size:11px;cursor:pointer;width:fit-content;list-style:none}
 .advanced>summary::-webkit-details-marker{display:none}
 .advanced[open]>summary svg{transform:rotate(180deg)}

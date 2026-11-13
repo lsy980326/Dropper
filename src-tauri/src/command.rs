@@ -32,6 +32,18 @@ pub struct Settings {
     pub quality: Quality,
     pub codec: Codec,
     pub container: Container,
+    #[serde(default)]
+    pub acceleration: Acceleration,
+    #[serde(default)]
+    pub parallelism: u8,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Acceleration {
+    #[default]
+    Auto,
+    Cpu,
 }
 
 pub const DEMUXERS: &str = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,flv,mpeg,mpegts,ogg";
@@ -123,7 +135,28 @@ pub fn encode_args(
     settings: &Settings,
     sample: Option<(f64, f64)>,
 ) -> Result<Vec<OsString>, String> {
+    encode_args_with_profile(
+        input,
+        output,
+        media,
+        settings,
+        sample,
+        crate::acceleration::EncodingProfile::cpu(crate::acceleration::cpu_threads()),
+    )
+}
+
+pub fn encode_args_with_profile(
+    input: &Path,
+    output: &Path,
+    media: &Media,
+    settings: &Settings,
+    sample: Option<(f64, f64)>,
+    profile: crate::acceleration::EncodingProfile,
+) -> Result<Vec<OsString>, String> {
     let extension = output_extension(media, settings)?;
+    if !profile.supports(media) {
+        return Err("이 영상의 색 정보와 비트 심도를 보존하려면 CPU 처리를 사용해 주세요.".into());
+    }
     let mut args: Vec<OsString> = [
         "-hide_banner",
         "-loglevel",
@@ -144,6 +177,12 @@ pub fn encode_args(
         }
         pair(&mut args, "-ss", format!("{start:.6}"));
     }
+    pair(&mut args, "-threads", profile.threads.max(1).to_string());
+    pair(
+        &mut args,
+        "-filter_threads",
+        profile.threads.clamp(1, 4).to_string(),
+    );
     pair(&mut args, "-i", input.as_os_str());
     let ordinal = if sample.is_some() {
         pair(&mut args, "-map", format!("0:{}", media.video.index));
@@ -169,39 +208,12 @@ pub fn encode_args(
         if sample.is_some() { "-1" } else { "0" },
     );
     pair(&mut args, "-c:a", "copy");
-    let encoder = match settings.codec {
-        Codec::H264 => "libx264",
-        Codec::H265 => "libx265",
-        Codec::Av1 => "libsvtav1",
-    };
-    pair(&mut args, &format!("-c:v:{ordinal}"), encoder);
-    let quality = match (settings.codec, settings.quality) {
-        (Codec::Av1, Quality::High) => 24,
-        (Codec::Av1, Quality::Balanced) => 30,
-        (Codec::Av1, Quality::Small) => 36,
-        (_, Quality::High) => 20,
-        (_, Quality::Balanced) => 23,
-        (_, Quality::Small) => 27,
-    };
-    pair(&mut args, &format!("-crf:v:{ordinal}"), quality.to_string());
-    pair(
-        &mut args,
-        &format!("-preset:v:{ordinal}"),
-        if settings.codec == Codec::Av1 {
-            "6"
-        } else {
-            "medium"
-        },
-    );
+    args.extend(profile.encoder_args(settings.codec, settings.quality, ordinal)?);
     pair(&mut args, &format!("-fps_mode:v:{ordinal}"), "passthrough");
     let ten_bit = media.hdr.is_some()
         || media.video.pix_fmt.contains("10")
         || media.video.pix_fmt.contains("12");
-    let pixel = if ten_bit && settings.codec != Codec::H264 {
-        "yuv420p10le"
-    } else {
-        "yuv420p"
-    };
+    let pixel = profile.pixel_format(ten_bit, settings.codec);
     pair(&mut args, &format!("-pix_fmt:v:{ordinal}"), pixel);
     pair(
         &mut args,
@@ -217,8 +229,12 @@ pub fn encode_args(
             pair(&mut args, &format!("-{key}:v:{ordinal}"), value.as_str());
         }
     }
-    if settings.codec == Codec::H265 {
-        let mut params = vec!["log-level=error".to_string(), "pools=4".into()];
+    if settings.codec == Codec::H265 && profile.backend == crate::acceleration::Backend::Cpu {
+        let mut params = vec![
+            "log-level=error".to_string(),
+            format!("pools={}", profile.threads.max(1)),
+            format!("frame-threads={}", profile.threads.clamp(1, 4)),
+        ];
         params.extend(hdr_params(media)?);
         pair(
             &mut args,

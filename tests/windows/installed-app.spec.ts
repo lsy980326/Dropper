@@ -2,16 +2,18 @@ import { test, expect, chromium } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Environment } from '../../src/bridge';
-import type { FileItem } from '../../src/model';
+import type { JobEvent } from '../../src/model';
 
 declare global {
   interface Window {
     __TAURI_INTERNALS__: {
       invoke<T>(command: string, args?: Record<string, unknown>): Promise<T>;
+      transformCallback<T>(callback: (response: T) => void): number;
     };
+    __dropperTestEvents: JobEvent[];
   }
 }
 
@@ -22,10 +24,12 @@ test('installed Windows app opens offline and compresses using its bundled engin
   const ffmpeg = join(appFolder, 'media', 'bin', 'ffmpeg.exe');
   const ffprobe = join(appFolder, 'media', 'bin', 'ffprobe.exe');
   const input = testInfo.outputPath('원본 영상.mkv');
-  const output = testInfo.outputPath('결과 폴더');
+  const secondInput = testInfo.outputPath('두 번째 영상.mkv');
+  const output = testInfo.outputPath('Compressed');
   mkdirSync(output, { recursive: true });
   execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-    'testsrc2=size=320x180:rate=24', '-t', '2', '-c:v', 'ffv1', '-y', input]);
+    'testsrc2=size=1280x720:rate=24', '-t', '8', '-c:v', 'ffv1', '-y', input]);
+  copyFileSync(input, secondInput);
   const originalHash = createHash('sha256').update(readFileSync(input)).digest('hex');
   const serverRunning = await fetch('http://127.0.0.1:1420', { signal: AbortSignal.timeout(1000) })
     .then(() => true, () => false);
@@ -58,18 +62,37 @@ test('installed Windows app opens offline and compresses using its bundled engin
     expect(environment.ready, environment.error ?? undefined).toBe(true);
     expect(environment.source).toBe('bundled');
     expect(environment.codecs).toContain('h264');
+    expect(environment.cpuThreads).toBeGreaterThan(0);
+    console.log('Verified hardware encoders:', environment.gpuEncoders);
 
-    const files = await page.evaluate(path =>
-      window.__TAURI_INTERNALS__.invoke<FileItem[]>('add_files', { paths: [path] }), input);
-    expect(files).toHaveLength(1);
-    expect(files[0].blocked).toBeNull();
-    await page.evaluate(async ({ id, folder }) =>
-      window.__TAURI_INTERNALS__.invoke<void>('run_jobs', {
-        ids: [id], settings: { quality: 'balanced', codec: 'h264', container: 'auto' },
-        folder, kind: 'compress', runId: 1,
-      }), { id: files[0].id, folder: output });
+    await page.evaluate(async paths => {
+      window.__dropperTestEvents = [];
+      const handler = window.__TAURI_INTERNALS__.transformCallback<{payload: JobEvent}>(event => window.__dropperTestEvents.push(event.payload));
+      await window.__TAURI_INTERNALS__.invoke('plugin:event|listen', {event:'job-progress',target:{kind:'Any'},handler});
+      // Exercise the actual drop handler, import IPC, React state and Start button.
+      await window.__TAURI_INTERNALS__.invoke('plugin:event|emit_to', {
+        target:{kind:'WebviewWindow',label:'main'},event:'tauri://drag-drop',payload:{paths,position:{x:100,y:100}},
+      });
+    }, [input, secondInput]);
+    await expect(page.getByText('원본 영상.mkv', {exact:true})).toBeVisible();
+    await expect(page.getByText('두 번째 영상.mkv', {exact:true})).toBeVisible();
+    await page.locator('summary').filter({hasText:'세부 설정'}).click();
+    await expect(page.getByRole('combobox',{name:'처리 장치',exact:true})).toHaveValue('auto');
+    await page.getByRole('combobox',{name:'압축 방식',exact:true}).selectOption('h264');
+    await page.getByRole('combobox',{name:'동시 작업',exact:true}).selectOption('2');
+    await page.getByRole('button',{name:'2개 영상 압축',exact:true}).click();
+    await expect(page.getByRole('button',{name:'폴더 열기',exact:true})).toHaveCount(2);
+    const events = await page.evaluate(() => window.__dropperTestEvents);
+    const active = new Set<string>(); let peak = 0;
+    for (const event of events) {
+      if (event.phase === 'processing') { active.add(event.id); peak = Math.max(peak,active.size); }
+      else active.delete(event.id);
+    }
+    expect(peak).toBe(Math.min(2,environment.cpuThreads));
+    expect(events.filter(event=>event.phase==='done')).toHaveLength(2);
+    expect(events.filter(event=>event.phase==='done').every(event=>!!event.backend)).toBe(true);
     const results = readdirSync(output).filter(name => name.endsWith('.mp4'));
-    expect(results).toHaveLength(1);
+    expect(results).toHaveLength(2);
     const compressed = join(output, results[0]);
     expect(statSync(compressed).size).toBeLessThan(statSync(input).size);
     const probe = JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-show_streams', '-show_format',
@@ -78,10 +101,11 @@ test('installed Windows app opens offline and compresses using its bundled engin
         format: { duration: string };
       };
     expect(probe.streams.find(stream => stream.codec_type === 'video'))
-      .toMatchObject({ codec_name: 'h264', width: 320, height: 180 });
-    expect(Number(probe.format.duration)).toBeCloseTo(2, 1);
+      .toMatchObject({ codec_name: 'h264', width: 1280, height: 720 });
+    expect(Number(probe.format.duration)).toBeCloseTo(8, 1);
     expect(createHash('sha256').update(readFileSync(input)).digest('hex')).toBe(originalHash);
-    console.log('Installed app: embedded UI, no dev server, bundled engine, IPC compression and original preservation passed.');
+    expect(createHash('sha256').update(readFileSync(secondInput)).digest('hex')).toBe(originalHash);
+    console.log('Installed app: embedded UI, no dev server, real drop/import, Auto device, parallel Start-button compression and original preservation passed.');
   } catch (error) {
     console.error('Installed app startup diagnostics', {
       pid: app.pid, exitCode: app.exitCode, signalCode: app.signalCode, startupLog,

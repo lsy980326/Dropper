@@ -1,9 +1,12 @@
 use crate::{
+    acceleration::{
+        cpu_threads, run_with_cpu_fallback, Backend, Capabilities, HardwareEncoder, WorkBudget,
+    },
     command::{output_extension, Codec, Settings},
-    engine::{canonical_input, Tools},
+    engine::{canonical_input, CompressionResult, Tools},
     folder::{self, FolderSource},
     media::Media,
-    process::execute,
+    process::ProcessError,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,7 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
     },
     time::{Duration, Instant, SystemTime},
 };
@@ -46,6 +49,21 @@ struct Input {
     folder_source: Option<FolderSource>,
 }
 
+struct BatchContext<'a> {
+    settings: &'a Settings,
+    folder: Option<&'a str>,
+    kind: JobKind,
+    run_id: u64,
+    tools: &'a Tools,
+    capabilities: &'a Capabilities,
+    threads: usize,
+}
+
+enum JobResult {
+    Estimate(u64),
+    Compressed(CompressionResult),
+}
+
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum JobKind {
@@ -70,6 +88,10 @@ pub struct JobEvent {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remaining_seconds: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend_note: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -79,6 +101,8 @@ pub struct Environment {
     pub source: String,
     pub codecs: Vec<Codec>,
     pub error: Option<String>,
+    pub cpu_threads: usize,
+    pub gpu_encoders: Vec<HardwareEncoder>,
 }
 
 #[derive(Serialize)]
@@ -108,6 +132,7 @@ pub struct Runtime {
     pub busy: AtomicBool,
     pub cancel: AtomicBool,
     next_id: AtomicU64,
+    capabilities: OnceLock<Result<Capabilities, String>>,
 }
 pub struct Guard(Arc<Runtime>);
 impl Drop for Guard {
@@ -246,6 +271,7 @@ impl Runtime {
             busy: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             next_id: AtomicU64::new(1),
+            capabilities: OnceLock::new(),
         })
     }
     pub fn begin(self: &Arc<Self>) -> Result<Guard, String> {
@@ -256,44 +282,35 @@ impl Runtime {
         Ok(Guard(self.clone()))
     }
     pub fn environment(&self) -> Environment {
-        let result = self.tools.as_ref().map_err(Clone::clone).and_then(|tools| {
-            let output = execute(
-                &tools.ffmpeg,
-                &["-hide_banner".into(), "-encoders".into()],
-                &AtomicBool::new(false),
-                Duration::from_secs(15),
-                true,
-                &mut |_| {},
-            )?;
-            let text = String::from_utf8_lossy(&output);
-            let codecs = [
-                (Codec::H264, "libx264"),
-                (Codec::H265, "libx265"),
-                (Codec::Av1, "libsvtav1"),
-            ]
-            .into_iter()
-            .filter_map(|(codec, name)| text.split_whitespace().any(|s| s == name).then_some(codec))
-            .collect::<Vec<_>>();
-            if codecs.is_empty() {
-                Err("지원하는 영상 인코더가 없습니다. FFmpeg 구성을 확인해 주세요.".into())
-            } else {
-                Ok(codecs)
-            }
-        });
-        match result {
-            Ok(codecs) => Environment {
+        match self.capabilities() {
+            Ok(caps) => Environment {
                 ready: true,
                 source: self.source.clone(),
-                codecs,
+                codecs: caps.codecs.clone(),
                 error: None,
+                cpu_threads: caps.cpu_threads,
+                gpu_encoders: caps.hardware.clone(),
             },
             Err(error) => Environment {
                 ready: false,
                 source: self.source.clone(),
                 codecs: vec![],
                 error: Some(error),
+                cpu_threads: cpu_threads(),
+                gpu_encoders: vec![],
             },
         }
+    }
+    fn capabilities(&self) -> Result<&Capabilities, String> {
+        self.capabilities
+            .get_or_init(|| {
+                self.tools
+                    .as_ref()
+                    .map_err(Clone::clone)
+                    .and_then(Capabilities::detect)
+            })
+            .as_ref()
+            .map_err(Clone::clone)
     }
     pub fn add(self: &Arc<Self>, paths: Vec<String>) -> Result<Vec<FileItem>, String> {
         let _guard = self.begin()?;
@@ -511,35 +528,95 @@ impl Runtime {
             })
             .collect::<Result<Vec<_>, _>>()?;
         drop(inputs);
-        for input in selected {
-            let mut event = JobEvent {
-                run_id,
-                id: input.item.id.clone(),
-                kind,
-                phase: "processing".into(),
-                progress: 0.0,
-                estimated_bytes: None,
-                output_bytes: None,
-                output_path: None,
-                message: None,
-                remaining_seconds: None,
-            };
-            if self.cancel.load(Ordering::Acquire) {
-                event.phase = "cancelled".into();
-                event.message = Some("취소됨".into());
-                emit(event);
-                continue;
+        let budget = WorkBudget::new(cpu_threads(), selected.len(), &settings)?;
+        let context = BatchContext {
+            settings: &settings,
+            folder: folder.as_deref(),
+            kind,
+            run_id,
+            tools,
+            capabilities: self.capabilities()?,
+            threads: budget.threads_per_worker,
+        };
+        crate::parallel::run(
+            selected,
+            budget.workers,
+            |input, send| self.process_one(input, &context, send),
+            emit,
+        );
+        Ok(())
+    }
+
+    fn process_one(
+        &self,
+        input: Input,
+        context: &BatchContext<'_>,
+        emit: &mut dyn FnMut(JobEvent),
+    ) {
+        let BatchContext {
+            settings,
+            folder,
+            kind,
+            run_id,
+            tools,
+            ..
+        } = *context;
+        let profile = context
+            .capabilities
+            .profile(&input.media, settings, context.threads);
+        let mut event = JobEvent {
+            run_id,
+            id: input.item.id.clone(),
+            kind,
+            phase: "processing".into(),
+            progress: 0.0,
+            estimated_bytes: None,
+            output_bytes: None,
+            output_path: None,
+            message: None,
+            remaining_seconds: None,
+            backend: Some(profile.backend.label().into()),
+            backend_note: context
+                .capabilities
+                .cpu_reason(&input.media, settings)
+                .map(str::to_string),
+        };
+        if self.cancel.load(Ordering::Acquire) {
+            event.phase = "cancelled".into();
+            event.message = Some("취소됨".into());
+            event.backend = None;
+            emit(event);
+            return;
+        }
+        emit(event.clone());
+        let result = (|| {
+            let meta = fs::metadata(&input.path)
+                .map_err(|_| "원본을 찾을 수 없습니다. 파일을 다시 추가해 주세요.")?;
+            if meta.len() != input.media.bytes || meta.modified().ok() != input.modified {
+                return Err("추가한 뒤 원본이 변경되었습니다. 파일을 다시 추가해 주세요.".into());
             }
-            emit(event.clone());
-            let result = (|| {
-                let meta = fs::metadata(&input.path)
-                    .map_err(|_| "원본을 찾을 수 없습니다. 파일을 다시 추가해 주세요.")?;
-                if meta.len() != input.media.bytes || meta.modified().ok() != input.modified {
-                    return Err(
-                        "추가한 뒤 원본이 변경되었습니다. 파일을 다시 추가해 주세요.".into(),
-                    );
+            output_extension(&input.media, settings)?;
+            let out = if kind == JobKind::Compress {
+                Some(if let Some(source) = &input.folder_source {
+                    source.output_dir(folder.map(Path::new))?
+                } else {
+                    folder.map(PathBuf::from).unwrap_or_else(|| {
+                        input
+                            .path
+                            .parent()
+                            .unwrap_or(Path::new("."))
+                            .join("Compressed")
+                    })
+                })
+            } else {
+                None
+            };
+            let result = run_with_cpu_fallback(profile, &self.cancel, |current, retried| {
+                if retried {
+                    event.backend = Some(Backend::Cpu.label().into());
+                    event.backend_note = Some("GPU 가속을 시작하지 못해 CPU로 전환했습니다. 그래픽 드라이버를 확인해 주세요.".into());
+                    emit(event.clone());
                 }
-                output_extension(&input.media, &settings)?;
                 let start = Instant::now();
                 let mut last = Instant::now() - Duration::from_secs(1);
                 let base = event.clone();
@@ -557,12 +634,13 @@ impl Runtime {
                     emit(update);
                 };
                 if kind == JobKind::Estimate {
-                    let estimate = tools.estimate(
+                    let estimate = tools.estimate_with_profile(
                         &input.path,
                         &input.media,
-                        &settings,
+                        settings,
                         &self.cancel,
                         &mut progress,
+                        current,
                     )?;
                     let meta = fs::metadata(&input.path).map_err(|e| e.to_string())?;
                     if meta.len() != input.media.bytes || meta.modified().ok() != input.modified {
@@ -570,27 +648,24 @@ impl Runtime {
                             "예측 중 원본이 변경되었습니다. 파일을 다시 추가해 주세요.".into()
                         );
                     }
-                    event.estimated_bytes = Some(estimate);
+                    Ok(JobResult::Estimate(estimate))
                 } else {
-                    let out = if let Some(source) = &input.folder_source {
-                        source.output_dir(folder.as_deref().map(Path::new))?
-                    } else {
-                        folder.as_ref().map(PathBuf::from).unwrap_or_else(|| {
-                            input
-                                .path
-                                .parent()
-                                .unwrap_or(Path::new("."))
-                                .join("Compressed")
-                        })
-                    };
-                    let result = tools.compress(
-                        &input.path,
-                        &input.media,
-                        &settings,
-                        &out,
-                        &self.cancel,
-                        &mut progress,
-                    )?;
+                    tools
+                        .compress_with_profile(
+                            &input.path,
+                            &input.media,
+                            settings,
+                            out.as_deref().expect("Compression output directory"),
+                            &self.cancel,
+                            &mut progress,
+                            current,
+                        )
+                        .map(JobResult::Compressed)
+                }
+            })?;
+            match result {
+                JobResult::Estimate(estimate) => event.estimated_bytes = Some(estimate),
+                JobResult::Compressed(result) => {
                     event.output_bytes = Some(result.output_bytes);
                     event.output_path = result.output_path.clone();
                     if !result.saved {
@@ -604,27 +679,30 @@ impl Runtime {
                             .insert(input.item.id.clone(), PathBuf::from(path));
                     }
                 }
-                Ok::<_, String>(())
-            })();
-            match result {
-                Ok(()) => {
-                    if event.phase == "processing" {
-                        event.phase = "done".into();
-                    }
-                    event.progress = 1.0;
-                }
-                Err(error) => {
-                    event.phase = if self.cancel.load(Ordering::Acquire) {
-                        "cancelled"
-                    } else {
-                        "error"
-                    }
-                    .into();
-                    event.message = Some(error);
-                }
             }
-            emit(event);
+            Ok::<_, ProcessError>(())
+        })();
+        match result {
+            Ok(()) => {
+                if event.phase == "processing" {
+                    event.phase = "done".into();
+                }
+                event.progress = 1.0;
+            }
+            Err(error) => {
+                event.phase = if self.cancel.load(Ordering::Acquire) {
+                    "cancelled"
+                } else {
+                    "error"
+                }
+                .into();
+                event.message = Some(if self.cancel.load(Ordering::Acquire) {
+                    "취소됨".into()
+                } else {
+                    error.to_string()
+                });
+            }
         }
-        Ok(())
+        emit(event);
     }
 }

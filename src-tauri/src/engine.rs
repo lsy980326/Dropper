@@ -1,8 +1,9 @@
 use crate::{
-    command::{encode_args, output_extension, Settings, DEMUXERS},
+    acceleration::{cpu_threads, EncodingProfile},
+    command::{encode_args_with_profile, output_extension, Settings, DEMUXERS},
     media::Media,
     policy::{estimate_size, sample_windows},
-    process::execute,
+    process::{execute, execute_checked, ProcessError},
 };
 use serde::Serialize;
 use std::{
@@ -149,6 +150,25 @@ impl Tools {
         cancel: &AtomicBool,
         progress: &mut dyn FnMut(f64),
     ) -> Result<u64, String> {
+        self.estimate_with_profile(
+            path,
+            media,
+            settings,
+            cancel,
+            progress,
+            EncodingProfile::cpu(cpu_threads()),
+        )
+        .map_err(|error| error.to_string())
+    }
+    pub fn estimate_with_profile(
+        &self,
+        path: &Path,
+        media: &Media,
+        settings: &Settings,
+        cancel: &AtomicBool,
+        progress: &mut dyn FnMut(f64),
+        profile: EncodingProfile,
+    ) -> Result<u64, ProcessError> {
         output_extension(media, settings)?;
         let audio = match media.audio_bps() {
             Some(rate) => rate,
@@ -160,8 +180,15 @@ impl Tools {
         let mut samples = vec![];
         for (index, (start, length)) in windows.iter().copied().enumerate() {
             let sample = temp.path().join(format!("sample-{index}.mkv"));
-            let args = encode_args(path, &sample, media, settings, Some((start, length)))?;
-            execute(
+            let args = encode_args_with_profile(
+                path,
+                &sample,
+                media,
+                settings,
+                Some((start, length)),
+                profile,
+            )?;
+            execute_checked(
                 &self.ffmpeg,
                 &args,
                 cancel,
@@ -252,6 +279,27 @@ impl Tools {
         cancel: &AtomicBool,
         progress: &mut dyn FnMut(f64),
     ) -> Result<CompressionResult, String> {
+        self.compress_with_profile(
+            path,
+            media,
+            settings,
+            output_dir,
+            cancel,
+            progress,
+            EncodingProfile::cpu(cpu_threads()),
+        )
+        .map_err(|error| error.to_string())
+    }
+    pub fn compress_with_profile(
+        &self,
+        path: &Path,
+        media: &Media,
+        settings: &Settings,
+        output_dir: &Path,
+        cancel: &AtomicBool,
+        progress: &mut dyn FnMut(f64),
+        profile: EncodingProfile,
+    ) -> Result<CompressionResult, ProcessError> {
         if cancel.load(Ordering::Acquire) {
             return Err("작업이 취소되었습니다.".into());
         }
@@ -272,8 +320,8 @@ impl Tools {
             .suffix(&format!(".{extension}"))
             .tempfile_in(&output_dir)
             .map_err(|e| format!("저장 파일을 만들지 못했습니다: {e}"))?;
-        let args = encode_args(&path, temp.path(), media, settings, None)?;
-        execute(
+        let args = encode_args_with_profile(&path, temp.path(), media, settings, None, profile)?;
+        execute_checked(
             &self.ffmpeg,
             &args,
             cancel,
@@ -328,7 +376,7 @@ impl Tools {
                     pending = error.file;
                 }
                 Err(error) => {
-                    return Err(format!("압축 파일을 저장하지 못했습니다: {}", error.error))
+                    return Err(format!("압축 파일을 저장하지 못했습니다: {}", error.error).into())
                 }
             }
         }
