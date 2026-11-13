@@ -1,7 +1,7 @@
 {
   "name": "dropper",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420 --strictPort",
@@ -13,7 +13,8 @@
     "desktop": "tauri dev",
     "bundle:media": "python3 scripts/bundle-media.py",
     "bundle": "node scripts/build-native.mjs",
-    "test:ui": "playwright test"
+    "test:ui": "playwright test",
+    "test:windows-install": "playwright test --config playwright.windows.config.ts"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",

@@ -1,0 +1,92 @@
+name: Windows installer verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-installer
+  cancel-in-progress: false
+
+jobs:
+  build-and-verify:
+    runs-on: windows-2025
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Prepare build tools
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\NSIS\makensis.exe")) {
+            choco install nsis --yes --no-progress --limit-output
+          }
+          "${env:ProgramFiles(x86)}\NSIS" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Prepare dependencies and test
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          npm ci
+          npm test
+          python -m unittest discover -s tests/packaging -v
+          python scripts/fetch-windows-media.py
+          python scripts/bundle-media.py --windows --source-dir artifacts/windows-media --output src-tauri/resources/media-windows
+          "$pwd\artifacts\windows-media" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Core tests on Windows
+        run: cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+      - name: Reject a release that would use the development server
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          cargo check --manifest-path src-tauri/Cargo.toml --release --locked --target x86_64-pc-windows-msvc --target-dir src-tauri/target-windows *> artifacts/rejected-dev-build.log
+          if ($LASTEXITCODE -eq 0 -or -not (Select-String -Path artifacts/rejected-dev-build.log -SimpleMatch 'Desktop release builds must embed frontend assets')) {
+            Get-Content artifacts/rejected-dev-build.log
+            throw 'The release guard did not reject the development build as expected'
+          }
+          Write-Output 'Development-mode release rejected by the real application compiler guard.'
+          exit 0
+      - name: Build the production installer
+        run: npm run bundle
+      - name: Verify upgrade from the previous installer
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          gh release download v0.2.0 --pattern Dropper_0.2.0_Windows_x64_setup.exe --dir artifacts/previous
+          $old = 'artifacts/previous/Dropper_0.2.0_Windows_x64_setup.exe'
+          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0793492ac530a1ed891b93a1b718472fafa7d1c4edce2deebaf37e99d0f00854') { throw 'Previous installer checksum mismatch' }
+          $process = Start-Process -FilePath $old -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Previous installer exited $($process.ExitCode)" }
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $process = Start-Process -FilePath "artifacts/Dropper_${version}_x64-setup.exe" -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "New installer exited $($process.ExitCode)" }
+      - name: Installed app offline startup and compression
+        run: npm run test:windows-install
+      - name: Upload verified installer to a draft release
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          $tag = "v$version"
+          $file = "artifacts/Dropper_${version}_x64-setup.exe"
+          $sum = "artifacts/Dropper_${version}_Windows_SHA256SUMS.txt"
+          "$((Get-FileHash $file -Algorithm SHA256).Hash.ToLowerInvariant())  Dropper_${version}_Windows_x64_setup.exe" | Set-Content $sum -Encoding ascii
+          Copy-Item $file "artifacts/Dropper_${version}_Windows_x64_setup.exe"
+          $candidate = "artifacts/Dropper_${version}_Windows_x64_setup.exe"
+          $existing = (gh release list --json tagName,isDraft | ConvertFrom-Json) | Where-Object tagName -eq $tag
+          if ($existing -and -not $existing.isDraft) {
+            Write-Output 'This version is already published; its assets were not changed.'
+          } elseif ($existing) {
+            gh release edit $tag --target $env:GITHUB_SHA
+            gh release upload $tag $candidate $sum --clobber
+          } else {
+            gh release create $tag $candidate $sum --draft --target $env:GITHUB_SHA --title "Dropper $tag" --notes 'Windows 설치 후 서버 없는 시작과 실제 압축 검사를 통과한 빌드입니다.'
+          }

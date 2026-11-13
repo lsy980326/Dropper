@@ -1,3 +1,5 @@
+mod release_guard;
+
 pub mod command;
 pub mod engine;
 pub mod folder;

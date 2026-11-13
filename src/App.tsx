@@ -211,7 +211,7 @@ export default function App() {
       </footer>
       <p className="bottom-note">예상 용량은 시험 압축 결과이며, 실제 크기는 영상에 따라 달라집니다.</p>
     </main>
-    <div className="app-bottom"><span>드롭퍼</span><span>가벼워지는 작은 습관.</span><span>v0.2.0</span></div>
+    <div className="app-bottom"><span>드롭퍼</span><span>가벼워지는 작은 습관.</span><span>v0.2.1</span></div>
   </div>;
 }
 

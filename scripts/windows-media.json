@@ -1,7 +1,8 @@
 {
   "publisher": "FFmpeg-Builds/FFmpeg-Builds (formerly BtbN)",
-  "asset": "ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
-  "url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-8.1.zip",
-  "sha256": "eeca861b84c286f6e789b10bcf0c4bb8fcb432ef9f4e5397fc9ed192e665a7aa",
-  "note": "Checksum-pinned asset. If latest is replaced, checksum failure requires an explicit version update; never silently accept it."
+  "asset": "ffmpeg-n8.1.3-35-gf1acb0a266-win64-gpl-8.1.zip",
+  "url": "https://github.com/lsy980326/Dropper/releases/download/v0.2.0/ffmpeg-n8.1.3-35-gf1acb0a266-win64-gpl-8.1.zip",
+  "sha256": "0fd32c3dd2a60a9d9d1206d217ec3e2dd74b47f5b6e67da648c73cb1db0f0bba",
+  "note": "Fixed historical archive. ffmpeg.exe and ffprobe.exe hashes match the v0.2.0 installer; its corresponding source kits remain applicable.",
+  "upstream_url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-11-11-12-39/ffmpeg-n8.1.3-35-gf1acb0a266-win64-gpl-8.1.zip"
 }

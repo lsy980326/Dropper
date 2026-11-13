@@ -14,5 +14,12 @@ function run(program,args){
 if(windows){
   run(python,['scripts/fetch-windows-media.py']);
   run(python,['scripts/bundle-media.py','--windows','--source-dir','artifacts/windows-media','--output','src-tauri/resources/media-windows']);
-}else run(python,['scripts/bundle-media.py']);
-run(process.execPath,['node_modules/@tauri-apps/cli/tauri.js','build','--bundles',windows?'nsis':'app,dmg']);
+  run(process.execPath,['node_modules/@tauri-apps/cli/tauri.js','build','--target','x86_64-pc-windows-msvc','--no-bundle','--','--locked','--target-dir','target-windows']);
+  run(python,['scripts/fetch-webview-runtime.py']);
+  const { readFileSync } = await import('node:fs');
+  const version=JSON.parse(readFileSync(resolve(root,'package.json'),'utf8')).version;
+  run('makensis',['-INPUTCHARSET','UTF8',`-DVERSION=${version}`,'scripts/windows-installer.nsi']);
+}else{
+  run(python,['scripts/bundle-media.py']);
+  run(process.execPath,['node_modules/@tauri-apps/cli/tauri.js','build','--bundles','app,dmg']);
+}
