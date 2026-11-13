@@ -1,5 +1,5 @@
 use crate::{
-    command::{Acceleration, Codec, Quality, Settings},
+    command::{Acceleration, Codec, Effort, Quality, Settings},
     engine::Tools,
     media::Media,
     process::{execute, ProcessError},
@@ -41,8 +41,10 @@ impl Backend {
             (Self::Nvidia, Codec::Av1) => Some("av1_nvenc"),
             (Self::Intel, Codec::H264) => Some("h264_qsv"),
             (Self::Intel, Codec::H265) => Some("hevc_qsv"),
+            (Self::Intel, Codec::Av1) => Some("av1_qsv"),
             (Self::Amd, Codec::H264) => Some("h264_amf"),
             (Self::Amd, Codec::H265) => Some("hevc_amf"),
+            (Self::Amd, Codec::Av1) => Some("av1_amf"),
             (Self::Apple, Codec::H264) => Some("h264_videotoolbox"),
             (Self::Apple, Codec::H265) => Some("hevc_videotoolbox"),
             _ => None,
@@ -154,7 +156,6 @@ impl Capabilities {
                 {
                     debug_assert_eq!(profile.backend.encoder(codec), Some(encoder));
                     hardware.push(HardwareEncoder { codec, backend });
-                    break;
                 }
             }
         }
@@ -166,10 +167,12 @@ impl Capabilities {
     }
 
     pub fn profile(&self, media: &Media, settings: &Settings, threads: usize) -> EncodingProfile {
-        let backend = if settings.acceleration == Acceleration::Auto && gpu_safe(media) {
+        let backend = if settings.acceleration != Acceleration::Cpu && gpu_safe(media) {
             self.hardware
                 .iter()
-                .find(|entry| entry.codec == settings.codec)
+                .find(|entry| {
+                    entry.codec == settings.codec && accepts(settings.acceleration, entry.backend)
+                })
                 .map(|entry| entry.backend)
                 .unwrap_or(Backend::Cpu)
         } else {
@@ -179,6 +182,17 @@ impl Capabilities {
             backend,
             threads: threads.max(1),
         }
+    }
+}
+
+pub fn accepts(acceleration: Acceleration, backend: Backend) -> bool {
+    match acceleration {
+        Acceleration::Auto => true,
+        Acceleration::Cpu => backend == Backend::Cpu,
+        Acceleration::Nvidia => backend == Backend::Nvidia,
+        Acceleration::Intel => backend == Backend::Intel,
+        Acceleration::Amd => backend == Backend::Amd,
+        Acceleration::Apple => backend == Backend::Apple,
     }
 }
 
@@ -253,6 +267,15 @@ impl EncodingProfile {
         quality: Quality,
         ordinal: usize,
     ) -> Result<Vec<OsString>, String> {
+        self.encoder_args_with_effort(codec, quality, ordinal, Effort::Balanced)
+    }
+    pub fn encoder_args_with_effort(
+        self,
+        codec: Codec,
+        quality: Quality,
+        ordinal: usize,
+        effort: Effort,
+    ) -> Result<Vec<OsString>, String> {
         let encoder = self
             .backend
             .encoder(codec)
@@ -281,7 +304,15 @@ impl EncodingProfile {
                 );
                 pair(
                     "preset",
-                    if codec == Codec::Av1 { "6" } else { "fast" }.into(),
+                    match (codec, effort) {
+                        (Codec::Av1, Effort::Speed) => "10",
+                        (Codec::Av1, Effort::Efficiency) => "2",
+                        (Codec::Av1, _) => "6",
+                        (_, Effort::Speed) => "ultrafast",
+                        (_, Effort::Efficiency) => "veryslow",
+                        _ => "fast",
+                    }
+                    .into(),
                 );
                 pair(
                     "crf",
@@ -306,7 +337,15 @@ impl EncodingProfile {
                 }
             }
             Backend::Nvidia => {
-                pair("preset", "p5".into());
+                pair(
+                    "preset",
+                    match effort {
+                        Effort::Speed => "p1",
+                        Effort::Balanced => "p5",
+                        Effort::Efficiency => "p7",
+                    }
+                    .into(),
+                );
                 pair("tune", "hq".into());
                 pair("rc", "vbr".into());
                 // Hardware CQ and software CRF are independent quality scales.
@@ -322,18 +361,58 @@ impl EncodingProfile {
                 pair("b", "0".into());
             }
             Backend::Intel => {
-                pair("preset", "veryfast".into());
+                pair(
+                    "preset",
+                    match effort {
+                        Effort::Speed => "veryfast",
+                        Effort::Balanced => "medium",
+                        Effort::Efficiency => "veryslow",
+                    }
+                    .into(),
+                );
                 pair("global_quality", [20, 23, 27][q].to_string());
-                pair("look_ahead", "0".into());
+                if codec != Codec::Av1 {
+                    pair("look_ahead", "0".into());
+                }
             }
             Backend::Amd => {
-                pair("quality", "balanced".into());
+                pair(
+                    "quality",
+                    match effort {
+                        Effort::Speed => "speed",
+                        Effort::Balanced => "balanced",
+                        Effort::Efficiency => "quality",
+                    }
+                    .into(),
+                );
                 pair("rc", "cqp".into());
-                pair("qp_i", [18, 21, 25][q].to_string());
-                pair("qp_p", [20, 23, 27][q].to_string());
+                pair(
+                    "qp_i",
+                    if codec == Codec::Av1 {
+                        [64, 92, 120][q]
+                    } else {
+                        [18, 21, 25][q]
+                    }
+                    .to_string(),
+                );
+                pair(
+                    "qp_p",
+                    if codec == Codec::Av1 {
+                        [72, 100, 128][q]
+                    } else {
+                        [20, 23, 27][q]
+                    }
+                    .to_string(),
+                );
             }
             Backend::Apple => {
                 pair("allow_sw", "0".into());
+                if effort != Effort::Balanced {
+                    pair(
+                        "prio_speed",
+                        if effort == Effort::Speed { "1" } else { "0" }.into(),
+                    );
+                }
                 pair("q", [75, 65, 55][q].to_string());
                 pair("b", "0".into());
             }

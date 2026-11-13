@@ -595,6 +595,38 @@ impl Runtime {
             if meta.len() != input.media.bytes || meta.modified().ok() != input.modified {
                 return Err("추가한 뒤 원본이 변경되었습니다. 파일을 다시 추가해 주세요.".into());
             }
+            let recommended = if settings.recommendation {
+                event.backend_note = Some("현재 PC에 맞는 설정을 짧게 시험하고 있어요.".into());
+                emit(event.clone());
+                Some(crate::recommendation::recommend(
+                    tools,
+                    &input.path,
+                    &input.media,
+                    settings,
+                    context.capabilities,
+                    context.threads,
+                    &self.cancel,
+                )?)
+            } else {
+                None
+            };
+            let settings = recommended
+                .as_ref()
+                .map(|r| &r.choice.settings)
+                .unwrap_or(settings);
+            let profile = recommended
+                .as_ref()
+                .map(|r| r.choice.profile)
+                .unwrap_or(profile);
+            if let Some(ref recommendation) = recommended {
+                event.backend = Some(profile.backend.label().into());
+                event.backend_note = Some(recommendation.note.clone());
+                emit(event.clone());
+            }
+            let meta = fs::metadata(&input.path).map_err(|e| e.to_string())?;
+            if meta.len() != input.media.bytes || meta.modified().ok() != input.modified {
+                return Err("시험 중 원본이 변경되었습니다. 파일을 다시 추가해 주세요.".into());
+            }
             output_extension(&input.media, settings)?;
             let out = if kind == JobKind::Compress {
                 Some(if let Some(source) = &input.folder_source {

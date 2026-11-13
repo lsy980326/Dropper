@@ -28,7 +28,7 @@ test('installed Windows app opens offline and compresses using its bundled engin
   const output = testInfo.outputPath('Compressed');
   mkdirSync(output, { recursive: true });
   execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
-    'testsrc2=size=1280x720:rate=24', '-t', '8', '-c:v', 'ffv1', '-y', input]);
+    'testsrc2=size=1280x720:rate=24', '-t', '20', '-c:v', 'ffv1', '-y', input]);
   copyFileSync(input, secondInput);
   const originalHash = createHash('sha256').update(readFileSync(input)).digest('hex');
   const serverRunning = await fetch('http://127.0.0.1:1420', { signal: AbortSignal.timeout(1000) })
@@ -78,10 +78,21 @@ test('installed Windows app opens offline and compresses using its bundled engin
     await expect(page.getByText('두 번째 영상.mkv', {exact:true})).toBeVisible();
     await page.locator('summary').filter({hasText:'세부 설정'}).click();
     await expect(page.getByRole('combobox',{name:'처리 장치',exact:true})).toHaveValue('auto');
+    await expect(page.getByRole('checkbox',{name:/맞춤 추천 자동 적용/})).toBeChecked();
+    await page.getByRole('checkbox',{name:/맞춤 추천 자동 적용/}).uncheck();
     await page.getByRole('combobox',{name:'압축 방식',exact:true}).selectOption('h264');
     await page.getByRole('combobox',{name:'동시 작업',exact:true}).selectOption('2');
     await page.getByRole('button',{name:'2개 영상 압축',exact:true}).click();
+    await expect(page.getByRole('main',{name:'작업 진행'})).toBeVisible();
+    await expect(page.getByText('원본 영상.mkv',{exact:true})).toHaveCount(0);
+    await expect(page.getByText('두 번째 영상.mkv',{exact:true})).toHaveCount(0);
+    await expect(page.getByRole('progressbar',{name:'전체 압축 진행률'})).toBeVisible();
+    await page.getByRole('button',{name:'자세히 보기',exact:true}).click();
+    await expect(page.getByText('원본 영상.mkv',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'간단히 보기',exact:true}).click();
+    await expect(page.getByRole('main',{name:'작업 진행'})).toBeVisible();
     await expect(page.getByRole('button',{name:'폴더 열기',exact:true})).toHaveCount(2);
+    await expect(page.getByRole('main',{name:'작업 진행'})).toHaveCount(0);
     const events = await page.evaluate(() => window.__dropperTestEvents);
     const active = new Set<string>(); let peak = 0;
     for (const event of events) {
@@ -102,7 +113,7 @@ test('installed Windows app opens offline and compresses using its bundled engin
       };
     expect(probe.streams.find(stream => stream.codec_type === 'video'))
       .toMatchObject({ codec_name: 'h264', width: 1280, height: 720 });
-    expect(Number(probe.format.duration)).toBeCloseTo(8, 1);
+    expect(Number(probe.format.duration)).toBeCloseTo(20, 1);
     expect(createHash('sha256').update(readFileSync(input)).digest('hex')).toBe(originalHash);
     expect(createHash('sha256').update(readFileSync(secondInput)).digest('hex')).toBe(originalHash);
     console.log('Installed app: embedded UI, no dev server, real drop/import, Auto device, parallel Start-button compression and original preservation passed.');

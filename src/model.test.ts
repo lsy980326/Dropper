@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEvent, applySettingsChange, invalidate, totals, pendingRows, type Row } from './model';
+import { applyEvent, applySettingsChange, batchProgress, invalidate, totals, pendingRows, type Row } from './model';
 
 const row = (id: string, bytes: number): Row => ({id,version:1,name:`${id}.mp4`,bytes,duration:60,width:1920,height:1080,codec:'h264',hdr:null,audioCount:1,subtitleCount:0,requiresMkv:false,blocked:null,notes:[],phase:'ready',progress:0});
 
@@ -62,5 +62,20 @@ describe('실제 결과와 예상치의 수명주기', () => {
     const result=applyEvent(rows,{runId:4,id:'a',kind:'estimate',phase:'done',progress:1,estimatedBytes:500},4);
     expect(result[0]).toEqual(rows[0]);
     expect(totals(result).output).toBe(400);
+  });
+});
+
+describe('작업 화면의 전체 진행률',()=>{
+  it('현재 배치만 기간에 따라 합산하고 대기 파일을 포함한다',()=>{
+    const rows:Row[]=[{...row('old',1),phase:'done'},{...row('a',1),duration:30,phase:'done'}, {...row('b',1),duration:90,phase:'processing',progress:0.5},row('queued',1)];
+    expect(batchProgress(rows,['a','b','queued'])).toEqual({percent:41,finished:1,total:3});
+  });
+  it('중간 100% 이벤트가 와도 모두 끝나기 전에는 100%로 표시하지 않는다',()=>{
+    expect(batchProgress([{...row('a',1),phase:'processing',progress:1}],['a'])).toEqual({percent:99,finished:0,total:1});
+    expect(batchProgress([{...row('a',1),phase:'cancelled'},{...row('b',1),phase:'error'}],['a','b'])).toEqual({percent:100,finished:2,total:2});
+  });
+  it('추천 목표와 처리 강도 변경은 이전 예측을 무효화한다',()=>{
+    const rows:Row[]=[{...row('a',100),phase:'done',estimatedBytes:20}];
+    for(const change of [{goal:'speed' as const},{effort:'efficiency' as const},{recommendation:false}])expect(applySettingsChange(rows,change)[0].estimatedBytes).toBeUndefined();
   });
 });

@@ -36,6 +36,31 @@ pub struct Settings {
     pub acceleration: Acceleration,
     #[serde(default)]
     pub parallelism: u8,
+    #[serde(default)]
+    pub goal: Goal,
+    #[serde(default)]
+    pub effort: Effort,
+    #[serde(default)]
+    pub recommendation: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Goal {
+    Speed,
+    #[default]
+    Balanced,
+    Quality,
+    Size,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum Effort {
+    Speed,
+    #[default]
+    Balanced,
+    Efficiency,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,6 +69,10 @@ pub enum Acceleration {
     #[default]
     Auto,
     Cpu,
+    Nvidia,
+    Intel,
+    Amd,
+    Apple,
 }
 
 pub const DEMUXERS: &str = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,flv,mpeg,mpegts,ogg";
@@ -208,7 +237,12 @@ pub fn encode_args_with_profile(
         if sample.is_some() { "-1" } else { "0" },
     );
     pair(&mut args, "-c:a", "copy");
-    args.extend(profile.encoder_args(settings.codec, settings.quality, ordinal)?);
+    args.extend(profile.encoder_args_with_effort(
+        settings.codec,
+        settings.quality,
+        ordinal,
+        settings.effort,
+    )?);
     pair(&mut args, &format!("-fps_mode:v:{ordinal}"), "passthrough");
     let ten_bit = media.hdr.is_some()
         || media.video.pix_fmt.contains("10")

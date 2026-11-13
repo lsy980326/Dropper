@@ -9,6 +9,7 @@ pub mod media;
 pub mod policy;
 pub mod parallel;
 pub mod process;
+pub mod recommendation;
 
 #[cfg(feature = "desktop")]
 mod desktop;
