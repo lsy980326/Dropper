@@ -28,6 +28,7 @@ fn installed_engine_recommends_and_compresses_a_folder_without_changing_original
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().join("내 영상");
     fs::create_dir_all(root.join("하위 폴더")).unwrap();
+    let root = root.canonicalize().unwrap();
     let first = root.join("원본 영상.mkv");
     let second = root.join("하위 폴더/다른 영상.mkv");
     let output = Command::new(&tools.ffmpeg)
