@@ -122,7 +122,11 @@ fn folder_can_be_dropped_with_files_and_custom_destination_preserves_root() {
             Some(destination.to_string_lossy().into_owned()),
             JobKind::Compress,
             2,
-            &mut |_| {},
+            &mut |event| {
+                if event.phase == "error" {
+                    eprintln!("Folder batch error: {:?}", event.message);
+                }
+            },
         )
         .unwrap();
     assert!(destination
@@ -158,7 +162,11 @@ fn choosing_source_parent_as_destination_does_not_hide_nested_sources() {
             Some(destination.to_string_lossy().into_owned()),
             JobKind::Compress,
             2,
-            &mut |_| {},
+            &mut |event| {
+                if event.phase == "error" {
+                    eprintln!("Folder batch error: {:?}", event.message);
+                }
+            },
         )
         .unwrap();
     assert!(destination

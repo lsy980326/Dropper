@@ -31,6 +31,21 @@ test('품질은 한 가지씩 선택되며 상세 설정은 필요할 때 연다
   await expect(page.getByRole('combobox',{name:'압축 방식',exact:true})).toHaveValue('av1');
 });
 
+test('가속과 병렬 설정은 자동이 기본이며 세부 설정 안에서만 보인다', async({page})=>{
+  await page.goto('/');
+  await expect(page.getByRole('combobox',{name:'처리 장치',exact:true})).toBeHidden();
+  await page.locator('summary').filter({hasText:'세부 설정'}).click();
+  const device=page.getByRole('combobox',{name:'처리 장치',exact:true});
+  const concurrency=page.getByRole('combobox',{name:'동시 작업',exact:true});
+  await expect(device).toHaveValue('auto');
+  await expect(concurrency).toHaveValue('0');
+  await device.selectOption('cpu');
+  await concurrency.selectOption('2');
+  await expect(device).toHaveValue('cpu');
+  await expect(concurrency).toHaveValue('2');
+  await page.screenshot({path:'artifacts/ui/dropper-processing-settings.png',fullPage:true});
+});
+
 for(const viewport of [{width:920,height:780},{width:720,height:560},{width:390,height:844}]){
   test(`${viewport.width}×${viewport.height} 창에서 가로 잘림 없이 주요 동작에 접근한다`,async({page})=>{
     await page.setViewportSize(viewport);await page.goto('/');

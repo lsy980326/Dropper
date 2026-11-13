@@ -1,15 +1,41 @@
 import { describe, expect, it } from 'vitest';
-import { applyEvent, invalidate, totals, pendingRows, type Row } from './model';
+import { applyEvent, applySettingsChange, invalidate, totals, pendingRows, type Row } from './model';
 
 const row = (id: string, bytes: number): Row => ({id,version:1,name:`${id}.mp4`,bytes,duration:60,width:1920,height:1080,codec:'h264',hdr:null,audioCount:1,subtitleCount:0,requiresMkv:false,blocked:null,notes:[],phase:'ready',progress:0});
 
 describe('실제 결과와 예상치의 수명주기', () => {
+  it('동시 작업 수만 바꾸면 완료 결과를 보존하고 새 영상만 처리한다', () => {
+    const rows:Row[]=[{...row('a',1000),phase:'done',outputBytes:400,outputPath:'/out/a.mp4'},row('b',1000)];
+    const updated=applySettingsChange(rows,{parallelism:2});
+    expect(updated).toBe(rows);
+    expect(updated[0].outputPath).toBe('/out/a.mp4');
+    expect(pendingRows(updated).map(value=>value.id)).toEqual(['b']);
+    expect(applySettingsChange(rows,{acceleration:'cpu'})[0].phase).toBe('ready');
+  });
   it('설정을 바꾸면 이전 예상과 결과 상태를 지운다', () => {
     const result = invalidate([{...row('a',1000),estimatedBytes:400,outputBytes:300,phase:'done',outputPath:'/out/a.mp4',message:'완료',progress:1}]);
     expect(result[0].estimatedBytes).toBeUndefined();
     expect(result[0].outputBytes).toBeUndefined();
     expect(result[0].phase).toBe('ready');
     expect(result[0].outputPath).toBeUndefined();
+  });
+  it('병렬 진행 이벤트가 서로 다른 영상 상태를 덮어쓰지 않는다', () => {
+    let rows: Row[] = [row('a', 1000), row('b', 1000)];
+    rows = applyEvent(rows, {runId:5,id:'a',kind:'compress',phase:'processing',progress:0.3,backend:'GPU · NVIDIA'}, 5);
+    rows = applyEvent(rows, {runId:5,id:'b',kind:'compress',phase:'processing',progress:0.7,backend:'CPU'}, 5);
+    expect(rows.map(value=>[value.id,value.progress,value.backend])).toEqual([['a',0.3,'GPU · NVIDIA'],['b',0.7,'CPU']]);
+  });
+  it('GPU에서 CPU로 전환하면 이전 GPU 예상치를 지운다', () => {
+    const rows = [{...row('a', 1000),backend:'GPU · NVIDIA',estimatedBytes:400}];
+    const result = applyEvent(rows, {runId:6,id:'a',kind:'compress',phase:'processing',progress:0,backend:'CPU',backendNote:'CPU로 전환했습니다.'}, 6);
+    expect(result[0].estimatedBytes).toBeUndefined();
+    expect(result[0].backend).toBe('CPU');
+    expect(result[0].backendNote).toContain('CPU로 전환');
+    expect(invalidate(result)[0].backend).toBeUndefined();
+  });
+  it('다시 GPU를 사용하면 이전 CPU 전환 안내를 남기지 않는다', () => {
+    const rows=[{...row('a',1000),backend:'CPU',backendNote:'CPU로 전환했습니다.'}];
+    expect(applyEvent(rows,{runId:7,id:'a',kind:'compress',phase:'processing',progress:0,backend:'GPU · NVIDIA'},7)[0].backendNote).toBeUndefined();
   });
   it('지난 작업 이벤트가 현재 결과를 덮어쓰지 않는다', () => {
     const rows=[row('a',1000)];
