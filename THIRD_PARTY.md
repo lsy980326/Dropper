@@ -8,6 +8,8 @@ Dropper는 FFmpeg/ffprobe를 별도 프로세스로 실행합니다. 동봉된 F
 
 Windows v0.2.1·v0.2.2·v0.2.3의 FFmpeg/ffprobe는 v0.2.0에 포함된 실행 파일과 SHA256이 동일하며 아래 대응 소스를 함께 사용합니다. Windows 빌드는 변경되는 latest URL 대신 동일 바이너리가 들어 있는 고정 배포 아카이브를 검증해 받습니다.
 
+Mac v0.2.3도 v0.2.0의 대응 소스가 제공된 엔진을 재사용합니다. Apple Silicon은 기존 설치 이미지의 엔진·라이브러리·고지를 체크섬으로 확인해 그대로 포함하고, Intel은 고정된 자체 빌드 아카이브를 검증해 재패키징합니다. 앱 전체에는 임시 서명을 적용하며 엔진의 빌드 구성과 대응 소스는 바꾸지 않습니다.
+
 | 설치 파일 | FFmpeg 엔진 | 대응 소스 |
 |---|---|---|
 | Mac Apple Silicon | 8.0.1 · Homebrew 8.0.1_4 | [macOS 소스 묶음](https://github.com/lsy980326/Dropper/releases/download/v0.2.0/Dropper_0.2.0_macOS_engine_sources.tar.gz) |
