@@ -108,7 +108,7 @@ fn static_hdr_metadata_and_ten_bit_survive_real_h265_encode() {
     let tools = Tools::system().unwrap();
     let cancel = AtomicBool::new(false);
     let media = tools.probe(&path, &cancel).unwrap();
-    assert_eq!(media.hdr.as_deref(), Some("HDR10"));
+    assert_eq!(media.hdr.as_deref(), Some("HDR10"), "{media:#?}");
     assert!(media
         .video
         .side_data_list
