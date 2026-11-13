@@ -70,7 +70,35 @@ jobs:
           $process = Start-Process -FilePath "artifacts/Dropper_${version}_x64-setup.exe" -ArgumentList '/S' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "New installer exited $($process.ExitCode)" }
       - name: Installed app offline startup and compression
-        run: npm run test:windows-install
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+          $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+          $elevated = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+          Write-Output "Test host elevated=$elevated; interactive=$([Environment]::UserInteractive); session=$((Get-Process -Id $PID).SessionId)"
+          whoami /groups | Select-String -SimpleMatch 'S-1-16-'
+          $runtime = Get-ItemProperty 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}' -ErrorAction SilentlyContinue
+          Write-Output "WebView2 runtime=$($runtime.pv)"
+          # Elevated WebView2 ignores environment overrides, but honors app-scoped HKLM policy.
+          # https://learn.microsoft.com/microsoft-edge/webview2/concepts/security
+          $key = 'HKLM:\SOFTWARE\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+          $previous = $null
+          if ($elevated) {
+            $previous = (Get-ItemProperty -Path $key -Name 'dropper.exe' -ErrorAction SilentlyContinue).'dropper.exe'
+            New-Item -Path $key -Force | Out-Null
+            New-ItemProperty -Path $key -Name 'dropper.exe' -PropertyType String -Value '--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1' -Force | Out-Null
+          }
+          try {
+            npm run test:windows-install
+          } finally {
+            if ($elevated) {
+              if ($null -eq $previous) {
+                Remove-ItemProperty -Path $key -Name 'dropper.exe'
+              } else {
+                Set-ItemProperty -Path $key -Name 'dropper.exe' -Value $previous
+              }
+            }
+          }
       - name: Upload verified installer to a draft release
         run: |
           $PSNativeCommandUseErrorActionPreference = $true

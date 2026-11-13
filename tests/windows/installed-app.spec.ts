@@ -34,8 +34,13 @@ test('installed Windows app opens offline and compresses using its bundled engin
   const app = spawn(join(appFolder, 'dropper.exe'), [], {
     env: { ...process.env, WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:
       '--remote-debugging-port=9222 --remote-debugging-address=127.0.0.1' },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let startupLog = '';
+  const recordStartup = (data: Buffer | string) => { startupLog = (startupLog + data.toString()).slice(-16_384); };
+  app.stdout.on('data', recordStartup);
+  app.stderr.on('data', recordStartup);
+  app.on('error', error => recordStartup(error.message));
   let browser: Browser | undefined;
   try {
     await expect.poll(async () => fetch('http://127.0.0.1:9222/json/version')
@@ -77,6 +82,17 @@ test('installed Windows app opens offline and compresses using its bundled engin
     expect(Number(probe.format.duration)).toBeCloseTo(2, 1);
     expect(createHash('sha256').update(readFileSync(input)).digest('hex')).toBe(originalHash);
     console.log('Installed app: embedded UI, no dev server, bundled engine, IPC compression and original preservation passed.');
+  } catch (error) {
+    console.error('Installed app startup diagnostics', {
+      pid: app.pid, exitCode: app.exitCode, signalCode: app.signalCode, startupLog,
+    });
+    if (app.pid) {
+      const diagnostic = spawnSync('powershell.exe', ['-NoProfile', '-Command',
+        `Get-Process -Id ${app.pid} -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,Responding,MainWindowTitle; Get-CimInstance Win32_Process -Filter 'ParentProcessId=${app.pid}' | Select-Object ProcessId,Name,CommandLine | Format-List`],
+      { encoding: 'utf8', timeout: 10_000 });
+      console.error(diagnostic.stdout, diagnostic.stderr);
+    }
+    throw error;
   } finally {
     if (browser?.isConnected()) await browser.close();
     if (app.pid && app.exitCode === null) spawnSync('taskkill', ['/PID', String(app.pid), '/T', '/F']);
