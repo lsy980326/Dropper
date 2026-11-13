@@ -104,11 +104,12 @@ fn h265_and_av1_produce_decodable_outputs() {
 fn static_hdr_metadata_and_ten_bit_survive_real_h265_encode() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("hdr.mkv");
-    ffmpeg(&["-f","lavfi","-i","testsrc2=size=160x96:rate=12,format=yuv420p10le","-t","2","-c:v","libx265","-color_primaries","bt2020","-color_trc","smpte2084","-colorspace","bt2020nc","-x265-params","lossless=1:pools=2:log-level=error:hdr10=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400"],&path);
+    // Newer FFmpeg derives encoder color properties from the filter's frames.
+    ffmpeg(&["-f","lavfi","-i","testsrc2=size=160x96:rate=12,format=yuv420p10le,setparams=color_primaries=bt2020:color_trc=smpte2084:colorspace=bt2020nc","-t","2","-c:v","libx265","-color_primaries","bt2020","-color_trc","smpte2084","-colorspace","bt2020nc","-x265-params","lossless=1:pools=2:log-level=error:hdr10=1:colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc:master-display=G(13250,34500)B(7500,3000)R(34000,16000)WP(15635,16450)L(10000000,1):max-cll=1000,400"],&path);
     let tools = Tools::system().unwrap();
     let cancel = AtomicBool::new(false);
     let media = tools.probe(&path, &cancel).unwrap();
-    assert_eq!(media.hdr.as_deref(), Some("HDR10"));
+    assert_eq!(media.hdr.as_deref(), Some("HDR10"), "{media:#?}");
     assert!(media
         .video
         .side_data_list
