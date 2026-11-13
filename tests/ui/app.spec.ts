@@ -27,6 +27,8 @@ test('품질은 한 가지씩 선택되며 상세 설정은 필요할 때 연다
   await expect(page.getByRole('radio',{name:/^균형/})).not.toBeChecked();
   await page.locator('summary').filter({hasText:'세부 설정'}).click();
   await expect(page.getByRole('combobox',{name:'압축 방식',exact:true})).toBeVisible();
+  await expect(page.getByRole('combobox',{name:'압축 방식',exact:true})).toBeDisabled();
+  await page.getByRole('checkbox',{name:/맞춤 추천 자동 적용/}).uncheck();
   await page.getByRole('combobox',{name:'압축 방식',exact:true}).selectOption('av1');
   await expect(page.getByRole('combobox',{name:'압축 방식',exact:true})).toHaveValue('av1');
 });
@@ -39,6 +41,7 @@ test('가속과 병렬 설정은 자동이 기본이며 세부 설정 안에서�
   const concurrency=page.getByRole('combobox',{name:'동시 작업',exact:true});
   await expect(device).toHaveValue('auto');
   await expect(concurrency).toHaveValue('0');
+  await page.getByRole('checkbox',{name:/맞춤 추천 자동 적용/}).uncheck();
   await device.selectOption('cpu');
   await concurrency.selectOption('2');
   await expect(device).toHaveValue('cpu');

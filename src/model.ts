@@ -1,7 +1,8 @@
 export type Quality = 'high' | 'balanced' | 'small';
 export type Codec = 'h264' | 'h265' | 'av1';
 export type Container = 'auto' | 'mp4' | 'mkv';
-export type Settings = { quality: Quality; codec: Codec; container: Container; acceleration: 'auto' | 'cpu'; parallelism: 0 | 1 | 2 | 4 };
+export type Goal = 'speed' | 'balanced' | 'quality' | 'size';
+export type Settings = { quality: Quality; codec: Codec; container: Container; acceleration: 'auto' | 'cpu' | 'nvidia' | 'intel' | 'amd' | 'apple'; goal: Goal; effort: 'speed' | 'balanced' | 'efficiency'; recommendation: boolean; parallelism: 0 | 1 | 2 | 4 };
 export type FileItem = {
   id: string; version: number; name: string; bytes: number; duration: number; width: number; height: number;
   codec: string; hdr: string | null; audioCount: number; subtitleCount: number;
@@ -20,7 +21,7 @@ export type JobEvent = {
   outputPath?: string; message?: string; remainingSeconds?: number;
   backend?: string; backendNote?: string;
 };
-export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', codec: 'h265', container: 'auto', acceleration: 'auto', parallelism: 0 };
+export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', codec: 'h265', container: 'auto', acceleration: 'auto', parallelism: 0, goal: 'balanced', effort: 'balanced', recommendation: true };
 export function pendingRows(rows:Row[]):Row[]{ return rows.filter(row=>!row.blocked&&row.phase!=='done'&&row.phase!=='unchanged'); }
 
 export function applyEvent(rows: Row[], event: JobEvent, runId: number): Row[] {
@@ -46,7 +47,7 @@ export function invalidate(rows: Row[]): Row[] {
     outputBytes:undefined,outputPath:undefined,message:undefined,remainingSeconds:undefined,backend:undefined,backendNote:undefined}));
 }
 export function applySettingsChange(rows:Row[],change:Partial<Settings>):Row[]{
-  return change.quality!==undefined||change.codec!==undefined||change.container!==undefined||change.acceleration!==undefined?invalidate(rows):rows;
+  return change.quality!==undefined||change.codec!==undefined||change.container!==undefined||change.acceleration!==undefined||change.goal!==undefined||change.effort!==undefined||change.recommendation!==undefined?invalidate(rows):rows;
 }
 export function totals(rows: Row[]): { original: number; output: number; percent: number | null; complete: boolean } {
   const finished=rows.filter(row=>row.phase==='done'||row.phase==='unchanged');
@@ -66,4 +67,18 @@ export function formatDuration(seconds:number): string {
   if(!Number.isFinite(seconds)||seconds<=0) return '—';
   const s=Math.round(seconds); const minutes=Math.floor(s/60);
   return minutes>=60?`${Math.floor(minutes/60)}:${String(minutes%60).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`:`${minutes}:${String(s%60).padStart(2,'0')}`;
+}
+
+export function batchProgress(rows:Row[], ids:string[]):{percent:number;finished:number;total:number} {
+  const selected=new Set(ids);
+  const batch=rows.filter(row=>selected.has(row.id));
+  let weight=0,done=0,finished=0;
+  for(const row of batch){
+    const w=Number.isFinite(row.duration)&&row.duration>0?row.duration:1;
+    const complete=['done','unchanged','error','cancelled'].includes(row.phase);
+    weight+=w;done+=w*(complete?1:row.phase==='processing'?Math.max(0,Math.min(1,Number.isFinite(row.progress)?row.progress:0)):0);
+    if(complete)finished++;
+  }
+  const percent=weight>0?Math.floor(done/weight*100):0;
+  return {percent:finished===ids.length?100:Math.min(99,percent),finished,total:ids.length};
 }

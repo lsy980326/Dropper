@@ -14,6 +14,7 @@ use std::{
 
 #[derive(Debug)]
 pub enum ProcessError {
+    TimedOut,
     Message(String),
     Exit {
         details: String,
@@ -78,6 +79,7 @@ impl From<&str> for ProcessError {
 impl std::fmt::Display for ProcessError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::TimedOut => f.write_str("처리 제한 시간을 초과했습니다."),
             Self::Message(message) => f.write_str(message),
             Self::Exit { details, .. } if details.is_empty() => {
                 f.write_str("영상 엔진이 정상적으로 완료되지 않았습니다.")
@@ -218,6 +220,9 @@ pub fn execute_checked(
         .join()
         .map_err(|_| "영상 엔진 오류 처리 실패")??;
     if let Some(message) = interrupted {
+        if !cancel.load(Ordering::Acquire) {
+            return Err(ProcessError::TimedOut);
+        }
         return Err(message.into());
     }
     let status = status.map_err(|e| format!("영상 엔진 상태 확인 실패: {e}"))?;

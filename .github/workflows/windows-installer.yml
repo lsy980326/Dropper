@@ -64,9 +64,9 @@ jobs:
       - name: Verify upgrade from the previous installer
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          gh release download v0.2.1 --pattern Dropper_0.2.1_Windows_x64_setup.exe --dir artifacts/previous
-          $old = 'artifacts/previous/Dropper_0.2.1_Windows_x64_setup.exe'
-          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne 'd68e10c35b8c901b23e41b083a7549f029ac1aa0633fc712abb3f161af1bb189') { throw 'Previous installer checksum mismatch' }
+          gh release download v0.2.2 --pattern Dropper_0.2.2_Windows_x64_setup.exe --dir artifacts/previous
+          $old = 'artifacts/previous/Dropper_0.2.2_Windows_x64_setup.exe'
+          if ((Get-FileHash $old -Algorithm SHA256).Hash.ToLowerInvariant() -ne '5e9b2c9f6442d419a220bc4c2ef94599aeb1b726f23089115aac0c8037c8d151') { throw 'Previous installer checksum mismatch' }
           $process = Start-Process -FilePath $old -ArgumentList '/S' -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Previous installer exited $($process.ExitCode)" }
           $version = (Get-Content package.json | ConvertFrom-Json).version

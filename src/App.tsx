@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowDownToLine, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, FileVideo2, Folder, FolderOpen, FolderPlus, Plus, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
+import WorkView from './WorkView';
 import { bridge, desktop, type Environment, type ImportProgress } from './bridge';
-import { applyEvent, applySettingsChange, DEFAULT_SETTINGS, formatBytes, formatDuration, pendingRows, totals, type FileItem, type Row, type Settings } from './model';
+import { applyEvent, applySettingsChange, batchProgress, DEFAULT_SETTINGS, formatBytes, formatDuration, pendingRows, totals, type FileItem, type Row, type Settings } from './model';
 
-const qualities = [
-  {value:'high',label:'화질 우선',description:'디테일을 더 선명하게'},
-  {value:'balanced',label:'균형',description:'화질도, 용량도 알맞게'},
-  {value:'small',label:'용량 우선',description:'파일 크기를 더 작게'},
+const goals = [
+  {value:'speed',quality:'balanced',effort:'speed',label:'속도 우선',description:'기다림을 더 짧게'},
+  {value:'balanced',quality:'balanced',effort:'balanced',label:'균형',description:'화질·시간·용량을 고르게'},
+  {value:'quality',quality:'high',effort:'balanced',label:'화질 우선',description:'디테일을 더 선명하게'},
+  {value:'size',quality:'small',effort:'efficiency',label:'용량 우선',description:'시간이 걸려도 더 작게'},
 ] as const;
 type Operation = 'adding' | 'estimate' | 'compress' | null;
 const errorText=(error:unknown)=>error instanceof Error?error.message:String(error);
@@ -25,6 +27,7 @@ export default function App() {
   const [importNotice,setImportNotice]=useState<string|null>(null);
   const [importWarnings,setImportWarnings]=useState<string[]>([]);
   const [page,setPage]=useState(0);
+  const [showDetails,setShowDetails]=useState(false);
   const [batchIds,setBatchIds]=useState<string[]>([]);
   const busyRef=useRef(false);
   const runId=useRef(0);
@@ -109,12 +112,12 @@ export default function App() {
     if(busyRef.current||!ready)return;
     const eligible=pendingRows(rows);
     if(!eligible.length)return;
-    busyRef.current=true;setOperation(kind);setError(null);setCancelling(false);
+    busyRef.current=true;setShowDetails(false);setOperation(kind);setError(null);setCancelling(false);
     const id=++runId.current;
     const selected=new Set(eligible.map(row=>row.id));
     setBatchIds([...selected]);
     setRows(current=>current.map(row=>selected.has(row.id)?{...row,phase:'ready',progress:0,message:undefined,remainingSeconds:undefined,
-      ...(kind==='estimate'?{estimatedBytes:undefined}:{outputBytes:undefined,outputPath:undefined})}:row));
+      ...(kind==='estimate'?{estimatedBytes:undefined}:{outputBytes:undefined,outputPath:undefined,...(settings.recommendation?{estimatedBytes:undefined}:{})})}:row));
     try{await bridge.run([...selected],settings,folder,kind,id);}
     catch(e){setError(errorText(e));}
     finally{busyRef.current=false;setOperation(null);setCancelling(false);}
@@ -139,10 +142,10 @@ export default function App() {
   const totalBytes=rows.reduce((sum,row)=>sum+row.bytes,0);
   const codecAvailable=environment?.codecs.includes(settings.codec)??false;
   const hasHdr=candidates.some(row=>row.hdr!==null);
-  const configurationValid=codecAvailable&&(!hasHdr||settings.codec==='h265');
+  const configurationValid=settings.recommendation||codecAvailable&&(!hasHdr||settings.codec==='h265');
   const activeRows=rows.filter(row=>row.phase==='processing');
   const active=activeRows[0];
-  const gpu=environment?.gpuEncoders.find(encoder=>encoder.codec===settings.codec);
+  const gpu=environment?.gpuEncoders.find(encoder=>encoder.codec===settings.codec&&(settings.acceleration==='auto'||settings.acceleration===encoder.backend));
   const deviceName=settings.acceleration==='cpu'||!gpu?'CPU':`GPU · ${{nvidia:'NVIDIA',intel:'Intel',amd:'AMD',apple:'Apple'}[gpu.backend]}`;
   const concurrentLimit=environment?Math.min(settings.parallelism||(environment.cpuThreads>=4?2:1),environment.cpuThreads):null;
   const hasFolder=rows.some(row=>!!row.folderName);
@@ -152,6 +155,9 @@ export default function App() {
   const selectedIds=new Set(batchIds);
   const batchFinished=rows.filter(row=>selectedIds.has(row.id)&&['done','unchanged','error','cancelled'].includes(row.phase)).length;
 
+  const progress=batchProgress(rows,batchIds);
+  if(operation==='compress'&&!showDetails) return <WorkView progress={progress} cancelling={cancelling} hasError={!!error} onDetails={()=>setShowDetails(true)} onCancel={()=>void cancel()}/>;
+
   return <div className="app-shell" onDragOver={event=>event.preventDefault()} onDrop={event=>event.preventDefault()}>
     <header className="app-header">
       <div className="brand"><span className="brand-mark" aria-hidden="true"><ArrowDownToLine size={23} strokeWidth={2}/></span><span>dropper<span className="brand-period">.</span></span></div>
@@ -159,7 +165,7 @@ export default function App() {
     </header>
 
     <main>
-      <div className="intro"><h1>툭 놓고, 가볍게.</h1><p>영상의 무게를 덜어내세요.</p></div>
+      <div className="intro">{operation==='compress'&&<button className="text-button summary-return" onClick={()=>setShowDetails(false)}>간단히 보기<ChevronRight size={15}/></button>}<h1>툭 놓고, 가볍게.</h1><p>영상의 무게를 덜어내세요.</p></div>
 
       {!desktop&&<div className="notice preview-notice" role="status"><span>화면 미리보기</span>실제 파일 압축은 Windows·macOS 데스크톱 앱에서 사용할 수 있어요.</div>}
       {desktop&&!environment&&!error&&<div className="notice" role="status">영상 엔진을 준비하고 있어요.</div>}
@@ -184,23 +190,26 @@ export default function App() {
 
       <section className="controls" aria-label="압축 설정">
         <fieldset className="quality-fieldset" disabled={busy}><legend>어느 쪽이 더 중요한가요?</legend><div className="quality-options">
-          {qualities.map(option=><label key={option.value} className={`quality-option ${settings.quality===option.value?'selected':''}`}><input type="radio" name="quality" value={option.value} checked={settings.quality===option.value} onChange={()=>changeSettings({quality:option.value})}/><span className="quality-label">{option.label}{option.value==='balanced'&&<span className="recommended">추천</span>}</span><span className="quality-description">{option.description}</span></label>)}
+          {goals.map(option=><label key={option.value} className={`quality-option ${settings.goal===option.value?'selected':''}`}><input type="radio" name="quality" value={option.value} checked={settings.goal===option.value} onChange={()=>changeSettings({goal:option.value,quality:option.quality,effort:option.effort})}/><span className="quality-label">{option.label}{option.value==='balanced'&&<span className="recommended">추천</span>}</span><span className="quality-description">{option.description}</span></label>)}
         </div></fieldset>
-        <p className="processing-note">{environment?`${deviceName}${settings.acceleration==='auto'&&gpu?' 우선':''} · 최대 ${concurrentLimit}개 동시 처리`:'GPU·CPU 자동 선택 · 동시 작업 자동'}</p>
+        <label className="recommendation-toggle"><input type="checkbox" checked={settings.recommendation} disabled={busy} onChange={event=>changeSettings({recommendation:event.target.checked,...(event.target.checked?{acceleration:'auto'}:{})})}/><span>맞춤 추천 자동 적용<small>내 PC에서 짧게 비교하고, 영상마다 알맞은 설정으로</small></span></label>
+        <p className="processing-note">{settings.recommendation?'시험 압축으로 처리 장치·압축 방식을 자동 선택':environment?`${deviceName}${settings.acceleration==='auto'&&gpu?' 우선':''} · 최대 ${concurrentLimit}개 동시 처리`:'GPU·CPU 자동 선택 · 동시 작업 자동'}</p>
         <details className="advanced"><summary>세부 설정<ChevronDown size={15}/></summary><div className="advanced-content">
-          <label>압축 방식<select disabled={busy} value={settings.codec} onChange={event=>changeSettings({codec:event.target.value as Settings['codec']})}>
+          <label>압축 방식<select disabled={busy||settings.recommendation} value={settings.codec} onChange={event=>changeSettings({codec:event.target.value as Settings['codec']})}>
             <option value="h265" disabled={desktop&&!environment?.codecs.includes('h265')}>H.265 · 기본</option>
             <option value="h264" disabled={desktop&&!environment?.codecs.includes('h264')}>H.264 · 재생 호환성</option>
             <option value="av1" disabled={desktop&&!environment?.codecs.includes('av1')}>AV1 · 압축 효율</option>
           </select></label>
           <label>저장 형식<select disabled={busy} value={settings.container} onChange={event=>changeSettings({container:event.target.value as Settings['container']})}><option value="auto">자동 · 원본 트랙 보존</option><option value="mp4">MP4</option><option value="mkv">MKV</option></select></label>
-          <label>처리 장치<select disabled={busy} value={settings.acceleration} onChange={event=>changeSettings({acceleration:event.target.value as Settings['acceleration']})}><option value="auto">자동 · GPU 우선</option><option value="cpu">CPU · 전체 코어 활용</option></select></label>
+          <label>처리 장치<select disabled={busy||settings.recommendation} value={settings.acceleration} onChange={event=>changeSettings({acceleration:event.target.value as Settings['acceleration']})}><option value="auto">자동 · GPU 우선</option><option value="cpu">CPU · 전체 코어 활용</option>{(['nvidia','intel','amd','apple'] as const).filter(backend=>environment?.gpuEncoders.some(encoder=>encoder.backend===backend)).map(backend=><option key={backend} value={backend}>GPU · {{nvidia:'NVIDIA',intel:'Intel',amd:'AMD',apple:'Apple'}[backend]}</option>)}</select></label>
+          <label>처리 강도<select disabled={busy||settings.recommendation} value={settings.effort} onChange={event=>changeSettings({effort:event.target.value as Settings['effort']})}><option value="speed">최대 속도 · 용량 증가 가능</option><option value="balanced">균형</option><option value="efficiency">최대 효율 · 오래 걸림</option></select></label>
           <label>동시 작업<select disabled={busy} value={settings.parallelism} onChange={event=>changeSettings({parallelism:Number(event.target.value) as Settings['parallelism']})}><option value="0">자동</option><option value="1">1개씩</option><option value="2">2개</option><option value="4">4개</option></select></label>
+          <p>직접 설정하려면 맞춤 추천을 꺼 주세요. 추천은 최대 18초 동안 완료된 후보를 비교하며, 짧은 영상·HDR·고비트 심도 영상은 기본 설정을 유지해요.</p>
           <p>H.265·AV1은 재생 앱의 코덱 지원이 필요할 수 있어요. 해상도와 프레임 타이밍을 유지하며, ‘화질 우선’도 손실 압축입니다.</p>
           <p>GPU를 사용할 수 없거나 색 정보 보존이 필요한 영상은 CPU로 처리해요. GPU가 표시되지 않으면 그래픽 드라이버를 확인해 주세요. GPU는 같은 화질에서 결과가 더 커질 수 있어요.</p>
         </div></details>
-        {hasHdr&&settings.codec!=='h265'&&<p className="configuration-warning" role="alert">HDR 영상의 색 정보를 보존하려면 세부 설정에서 H.265를 선택해 주세요.</p>}
-        {desktop&&environment?.ready&&!codecAvailable&&<p className="configuration-warning" role="alert">현재 엔진이 선택한 압축 방식을 지원하지 않습니다. 세부 설정에서 다른 방식을 선택해 주세요.</p>}
+        {!settings.recommendation&&hasHdr&&settings.codec!=='h265'&&<p className="configuration-warning" role="alert">HDR 영상의 색 정보를 보존하려면 세부 설정에서 H.265를 선택해 주세요.</p>}
+        {!settings.recommendation&&desktop&&environment?.ready&&!codecAvailable&&<p className="configuration-warning" role="alert">현재 엔진이 선택한 압축 방식을 지원하지 않습니다. 세부 설정에서 다른 방식을 선택해 주세요.</p>}
       </section>
 
       <div className="destination"><Folder size={17}/><div><span className="destination-label">저장 위치</span><span className="destination-path" title={folder??'추가한 파일·폴더의 Compressed 폴더'}>{folder??(hasFolder?'선택한 폴더 / Compressed':'원본 폴더 / Compressed')}</span></div>{folder&&<button className="text-button reset-folder" disabled={busy} onClick={()=>setFolder(null)}>기본값</button>}<button className="text-button" onClick={()=>void changeFolder()} disabled={busy||!desktop}>변경</button></div>
@@ -219,7 +228,7 @@ export default function App() {
       </footer>
       <p className="bottom-note">예상 용량은 시험 압축 결과이며, 실제 크기는 영상에 따라 달라집니다.</p>
     </main>
-    <div className="app-bottom"><span>드롭퍼</span><span>가벼워지는 작은 습관.</span><span>v0.2.2</span></div>
+    <div className="app-bottom"><span>드롭퍼</span><span>가벼워지는 작은 습관.</span><span>v0.2.3</span></div>
   </div>;
 }
 
