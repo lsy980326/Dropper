@@ -1,0 +1,114 @@
+name: macOS installer verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-installers
+  cancel-in-progress: false
+
+jobs:
+  build-and-verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-26
+            architecture: arm64
+            target: aarch64-apple-darwin
+            label: AppleSilicon
+            minimum: '26.0'
+            config: src-tauri/tauri.macos.conf.json
+          - runner: macos-15-intel
+            architecture: x86_64
+            target: x86_64-apple-darwin
+            label: Intel
+            minimum: '12.0'
+            config: src-tauri/tauri.intel.conf.json
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    env:
+      GH_TOKEN: ${{ github.token }}
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.minimum }}
+      APPLE_SIGNING_IDENTITY: '-'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Confirm native architecture and unchanged release application
+        run: |
+          test "$(uname -m)" = '${{ matrix.architecture }}'
+          release_tag="v$(node -p 'require("./package.json").version')"
+          git diff --exit-code "$release_tag" -- index.html public vite.config.ts tsconfig*.json src src-tauri/src src-tauri/build.rs src-tauri/capabilities src-tauri/icons src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri*.json package.json package-lock.json
+          rustup toolchain install 1.96.0 --profile minimal
+          rustup default 1.96.0
+      - name: Prepare source-covered bundled engine
+        run: |
+          python3 scripts/prepare-macos-media.py '${{ matrix.architecture }}'
+          if [ '${{ matrix.architecture }}' = arm64 ]; then
+            echo "$PWD/src-tauri/resources/media/bin" >> "$GITHUB_PATH"
+          else
+            echo "$PWD/src-tauri/resources/media-intel/bin" >> "$GITHUB_PATH"
+          fi
+      - name: Test frontend, packaging and core with the bundled engine
+        run: |
+          npm ci
+          npm test
+          python3 -m unittest discover -s tests/packaging -v
+          ffmpeg -version
+          cargo test --manifest-path src-tauri/Cargo.toml --no-default-features --locked
+      - name: Build production app and disk image
+        run: npm run tauri build -- --target '${{ matrix.target }}' --config '${{ matrix.config }}' --bundles app,dmg -- --locked
+      - name: Install and verify native window and actual compression
+        run: |
+          release_version=$(node -p 'require("./package.json").version')
+          mkdir -p artifacts/verified
+          source_image=$(find 'src-tauri/target/${{ matrix.target }}/release/bundle/dmg' -maxdepth 1 -name '*.dmg' -type f)
+          test -n "$source_image"
+          candidate="artifacts/verified/Dropper_${release_version}_macOS_${{ matrix.label }}.dmg"
+          cp "$source_image" "$candidate"
+          python3 scripts/verify-macos-installer.py "$candidate" --architecture '${{ matrix.architecture }}' --minimum '${{ matrix.minimum }}'
+          shasum -a 256 "$candidate"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: macos-${{ matrix.label }}
+          path: artifacts/verified/*.dmg
+          if-no-files-found: error
+          retention-days: 3
+
+  upload-verified-installers:
+    needs: build-and-verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Add verified Mac installers without replacing existing assets
+        run: |
+          gh run download "$GITHUB_RUN_ID" --pattern 'macos-*' --dir artifacts/candidates
+          release_version=$(python3 -c 'import json; print(json.load(open("package.json"))["version"])')
+          mkdir -p artifacts/upload
+          for architecture in AppleSilicon Intel; do
+            candidate="Dropper_${release_version}_macOS_${architecture}.dmg"
+            cp "artifacts/candidates/macos-${architecture}/${candidate}" "artifacts/upload/${candidate}"
+          done
+          cd artifacts/upload
+          shasum -a 256 ./*.dmg > "Dropper_${release_version}_macOS_SHA256SUMS.txt"
+          # No --clobber: a published installer must never be silently replaced.
+          gh release upload "v${release_version}" ./*.dmg ./*SHA256SUMS.txt
