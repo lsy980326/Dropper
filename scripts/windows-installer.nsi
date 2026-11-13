@@ -28,10 +28,11 @@ BrandingText "Dropper · 영상의 무게를 덜어내다"
 Section "드롭퍼" Main
   SetShellVarContext current
   SetOutPath "$INSTDIR"
-  File "${ROOT}/src-tauri/target-windows/x86_64-pc-windows-msvc/release/dropper.exe"
-  File /oname=THIRD_PARTY.md "${ROOT}/THIRD_PARTY.md"
+  ; Native makensis splits File paths only on backslashes; POSIX also accepts them.
+  File "${ROOT}\src-tauri\target-windows\x86_64-pc-windows-msvc\release\dropper.exe"
+  File /oname=THIRD_PARTY.md "${ROOT}\THIRD_PARTY.md"
   SetOutPath "$INSTDIR\media"
-  File /r "${ROOT}/src-tauri/resources/media-windows/*"
+  File /r "${ROOT}\src-tauri\resources\media-windows\*"
   ; Official detection keys: learn.microsoft.com/microsoft-edge/webview2/concepts/distribution
   SetRegView 32
   ReadRegStr $1 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}" "pv"
@@ -42,7 +43,7 @@ Section "드롭퍼" Main
   ${If} $1 == ""
   ${OrIf} $1 == "0.0.0.0"
     SetOutPath "$TEMP\DropperRuntime"
-    File "${ROOT}/artifacts/MicrosoftEdgeWebview2Setup.exe"
+    File "${ROOT}\artifacts\MicrosoftEdgeWebview2Setup.exe"
     DetailPrint "Microsoft WebView2 런타임 설치 중… (인터넷 연결 필요)"
     ExecWait '"$TEMP\DropperRuntime\MicrosoftEdgeWebview2Setup.exe" /silent /install' $0
     Delete "$TEMP\DropperRuntime\MicrosoftEdgeWebview2Setup.exe"
