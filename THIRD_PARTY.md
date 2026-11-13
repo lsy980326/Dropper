@@ -4,7 +4,7 @@ Dropper는 FFmpeg/ffprobe를 별도 프로세스로 실행합니다. 동봉된 F
 
 ## v0.2.0·v0.2.1 대응 소스 다운로드
 
-설치 파일과 같은 [v0.2.0 릴리스](https://github.com/lsy980326/Dropper/releases/tag/v0.2.0)에서 소스·패치·빌드 방법·고지·체크섬을 추가 비용 없이 받습니다.
+[v0.2.0 릴리스](https://github.com/lsy980326/Dropper/releases/tag/v0.2.0)에서 소스·패치·빌드 방법·고지·체크섬을 추가 비용 없이 받습니다. 아래 소스 파일은 엔진 검토·재빌드용이며, 앱을 설치하고 사용하는 데는 필요하지 않습니다.
 
 Windows v0.2.1의 FFmpeg/ffprobe는 v0.2.0에 포함된 실행 파일과 SHA256이 동일하며 아래 대응 소스를 함께 사용합니다. Windows 빌드는 변경되는 latest URL 대신 동일 바이너리가 들어 있는 고정 배포 아카이브를 검증해 받습니다.
 
