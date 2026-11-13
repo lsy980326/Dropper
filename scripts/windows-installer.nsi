@@ -4,7 +4,9 @@ Unicode true
 ; makensis changes working directory to the script directory before processing.
 !define ROOT ".."
 !define APPNAME "Dropper"
-!define VERSION "0.2.0"
+!ifndef VERSION
+!error "Pass the package version with -DVERSION"
+!endif
 Name "드롭퍼 ${VERSION}"
 OutFile "${ROOT}/artifacts/Dropper_${VERSION}_x64-setup.exe"
 InstallDir "$LOCALAPPDATA\Programs\Dropper"

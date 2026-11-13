@@ -1,7 +1,7 @@
 use dropper_lib::folder::{scan, FolderSource};
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -29,14 +29,16 @@ fn recursively_collects_videos_in_stable_order_and_skips_other_files_and_results
     let names: Vec<_> = scan
         .files
         .iter()
-        .map(|p| {
-            p.strip_prefix(&root)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
-        })
+        .map(|p| p.strip_prefix(&root).unwrap().to_path_buf())
         .collect();
-    assert_eq!(names, vec!["a.mov", "b.MP4", "여행/2.MKV"]);
+    assert_eq!(
+        names,
+        vec![
+            PathBuf::from("a.mov"),
+            PathBuf::from("b.MP4"),
+            Path::new("여행").join("2.MKV")
+        ]
+    );
     assert_eq!(scan.skipped_results, 2);
     assert!(scan.warnings.is_empty());
 }
