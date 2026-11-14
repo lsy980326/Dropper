@@ -16,7 +16,7 @@ use std::{
 
 #[test]
 #[ignore = "Requires a DMG-installed app; run through scripts/verify-macos-installer.py"]
-fn installed_engine_recommends_and_compresses_a_folder_without_changing_originals() {
+fn installed_engine_recommends_compresses_and_archives_a_folder() {
     let app = PathBuf::from(
         std::env::var_os("DROPPER_INSTALLED_APP").expect("Installed app path required"),
     );
@@ -86,6 +86,9 @@ fn installed_engine_recommends_and_compresses_a_folder_without_changing_original
             Settings {
                 recommendation: true,
                 parallelism: 2,
+                strip_data: true,
+                archive_originals: true,
+                organize_output: true,
                 ..Settings::default()
             },
             None,
@@ -130,7 +133,7 @@ fn installed_engine_recommends_and_compresses_a_folder_without_changing_original
             event.backend_note
         );
         let path = Path::new(event.output_path.as_deref().unwrap());
-        assert!(path.starts_with(root.join("Compressed")));
+        assert!(path.starts_with(root.join("Compressed/Results")));
         let actual = tools.probe(path, &cancel).unwrap();
         assert_eq!(actual.video.width, source.video.width);
         assert_eq!(actual.video.height, source.video.height);
@@ -144,8 +147,32 @@ fn installed_engine_recommends_and_compresses_a_folder_without_changing_original
             1
         );
         assert!(actual.bytes < source.bytes);
+        assert!(actual.auxiliary_tracks().is_empty());
+        assert!(event.original_moved, "{:?}", event.archive_warning);
+        assert!(
+            event.archive_warning.is_none(),
+            "{:?}",
+            event.archive_warning
+        );
+        assert_eq!(
+            fs::read(event.archived_path.as_deref().unwrap()).unwrap(),
+            original
+        );
+        assert!(Path::new(event.report_path.as_deref().unwrap()).is_file());
     }
-    assert_eq!(fs::read(first).unwrap(), original);
-    assert_eq!(fs::read(second).unwrap(), original);
+    assert!(!first.exists());
+    assert!(!second.exists());
+    assert_eq!(
+        fs::read(root.join("Compressed/Originals/원본 영상.mkv")).unwrap(),
+        original
+    );
+    assert_eq!(
+        fs::read(root.join("Compressed/Originals/하위 폴더/다른 영상.mkv")).unwrap(),
+        original
+    );
+    let report = fs::read_to_string(root.join("Compressed/Dropper-results.csv")).unwrap();
+    assert!(report.contains("원본 영상.mkv") && report.contains("다른 영상.mkv"));
+    let scan = dropper_lib::folder::scan(&root, None, &cancel, &mut |_| {}).unwrap();
+    assert!(scan.files.is_empty());
     println!("Installed bundle: automatic recommendations, parallel folder batch, tracks and originals verified.");
 }

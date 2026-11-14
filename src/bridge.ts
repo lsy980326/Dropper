@@ -7,8 +7,8 @@ import type { Codec, FileItem, JobEvent, Settings } from './model';
 export const desktop = isTauri();
 export type Environment = {ready:boolean;source:string;codecs:Codec[];error:string|null;cpuThreads:number;gpuEncoders:Array<{codec:Codec;backend:'nvidia'|'intel'|'amd'|'apple'}>};
 export type ImportProgress = {runId:number;stage:'scanning'|'analyzing';found:number;checked:number};
-export type ImportResult = {files:FileItem[];warnings:string[];skippedResults:number;skippedLinks:number;cancelled:boolean;folderCount:number};
-export const extensions = ['mp4','mov','mkv','avi','webm','wmv','flv','mpeg','mpg','ts','mts','m2ts','m4v','3gp'];
+export type ImportResult = {files:FileItem[];warnings:string[];skippedResults:number;skippedLinks:number;ignoredFiles?:number;cancelled:boolean;folderCount:number};
+export const extensions = ['mp4','mov','mkv','avi','webm','wmv','flv','mpeg','mpg','ts','mts','m2ts','m4v','3gp','3g2','mxf','asf','vob','ogv','m2t','mpe','qt','f4v'];
 export const bridge = {
   environment: () => invoke<Environment>('get_environment'),
   async chooseFiles():Promise<string[]> {
@@ -23,7 +23,7 @@ export const bridge = {
   clear: () => invoke<void>('clear_files'),
   run: (ids:string[],settings:Settings,folder:string|null,kind:'estimate'|'compress',runId:number) => invoke<void>('run_jobs',{ids,settings,folder,kind,runId}),
   cancel: () => invoke<void>('cancel_active'),
-  reveal: (id:string) => invoke<void>('reveal_output',{id}),
+  reveal: (id:string,target?:'output'|'original'|'report') => invoke<void>('reveal_output',{id,target}),
   onProgress: (callback:(event:JobEvent)=>void) => listen<JobEvent>('job-progress',event=>callback(event.payload)),
   onImportProgress: (callback:(event:ImportProgress)=>void) => listen<ImportProgress>('import-progress',event=>callback(event.payload)),
   onDrop: (callback:(paths:string[])=>void,hover:(active:boolean)=>void) => getCurrentWebviewWindow().onDragDropEvent(event=>{

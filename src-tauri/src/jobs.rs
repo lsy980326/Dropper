@@ -2,6 +2,7 @@ use crate::{
     acceleration::{
         cpu_threads, run_with_cpu_fallback, Backend, Capabilities, HardwareEncoder, WorkBudget,
     },
+    archive::{self, ArchivePlan, ResultRecord, SourceSnapshot},
     command::{output_extension, Codec, Settings},
     engine::{canonical_input, CompressionResult, Tools},
     folder::{self, FolderSource},
@@ -37,6 +38,7 @@ pub struct FileItem {
     pub requires_mkv: bool,
     pub blocked: Option<String>,
     pub notes: Vec<String>,
+    pub data_tracks: Vec<String>,
     pub folder_name: Option<String>,
     pub relative_path: Option<String>,
 }
@@ -47,6 +49,15 @@ struct Input {
     item: FileItem,
     media: Media,
     folder_source: Option<FolderSource>,
+    archived: bool,
+    original_path: PathBuf,
+}
+
+#[derive(Clone)]
+struct RejectedInput {
+    path: PathBuf,
+    folder_source: Option<FolderSource>,
+    item: FileItem,
 }
 
 struct BatchContext<'a> {
@@ -92,6 +103,11 @@ pub struct JobEvent {
     pub backend: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub backend_note: Option<String>,
+    pub archived_path: Option<String>,
+    pub original_moved: bool,
+    pub archive_warning: Option<String>,
+    pub report_path: Option<String>,
+    pub stage: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -112,6 +128,7 @@ pub struct ImportResult {
     pub warnings: Vec<String>,
     pub skipped_results: usize,
     pub skipped_links: usize,
+    pub ignored_files: usize,
     pub cancelled: bool,
     pub folder_count: usize,
 }
@@ -128,7 +145,9 @@ pub struct Runtime {
     pub tools: Result<Tools, String>,
     pub source: String,
     inputs: Mutex<HashMap<String, Input>>,
+    rejected: Mutex<HashMap<String, RejectedInput>>,
     outputs: Mutex<HashMap<String, PathBuf>>,
+    reports: Mutex<HashMap<String, PathBuf>>,
     pub busy: AtomicBool,
     pub cancel: AtomicBool,
     next_id: AtomicU64,
@@ -158,6 +177,7 @@ impl Runtime {
         let mut warnings = vec![];
         let mut skipped_results = 0;
         let mut skipped_links = 0;
+        let mut ignored_files = 0;
         let mut folder_count = 0;
         for text in paths {
             if self.cancel.load(Ordering::Acquire) {
@@ -199,6 +219,7 @@ impl Runtime {
                     Ok(scan) => {
                         skipped_results += scan.skipped_results;
                         skipped_links += scan.skipped_links;
+                        ignored_files += scan.ignored_files;
                         warnings.extend(scan.warnings);
                         for path in scan.files {
                             let relative_path = path
@@ -259,6 +280,7 @@ impl Runtime {
             skipped_results,
             skipped_links,
             folder_count,
+            ignored_files,
             cancelled: self.cancel.load(Ordering::Acquire),
         })
     }
@@ -267,7 +289,9 @@ impl Runtime {
             tools,
             source: source.into(),
             inputs: Mutex::new(HashMap::new()),
+            rejected: Mutex::new(HashMap::new()),
             outputs: Mutex::new(HashMap::new()),
+            reports: Mutex::new(HashMap::new()),
             busy: AtomicBool::new(false),
             cancel: AtomicBool::new(false),
             next_id: AtomicU64::new(1),
@@ -337,7 +361,24 @@ impl Runtime {
                 break;
             }
             let version = self.next_id.fetch_add(1, Ordering::Relaxed);
-            let id = format!("f{version}");
+            let path = path.canonicalize().unwrap_or(path);
+            let existing = self
+                .inputs
+                .lock()
+                .map_err(|_| "파일 목록 잠금 실패")?
+                .values()
+                .find(|i| i.path == path)
+                .map(|i| i.item.id.clone());
+            let rejected = self
+                .rejected
+                .lock()
+                .map_err(|_| "분석 결과 잠금 실패")?
+                .values()
+                .find(|i| i.path == path)
+                .map(|i| i.item.id.clone());
+            let id = existing
+                .or(rejected)
+                .unwrap_or_else(|| format!("f{version}"));
             let name = path
                 .file_name()
                 .unwrap_or_default()
@@ -364,6 +405,7 @@ impl Runtime {
                     if input.media.bytes == before.len()
                         && input.modified == before.modified().ok()
                         && input.folder_source == source
+                        && !input.archived
                     {
                         return Ok(input.item.clone());
                     }
@@ -415,6 +457,19 @@ impl Runtime {
                     requires_mkv: media.requires_mkv(),
                     blocked: media.blocked.clone(),
                     notes,
+                    data_tracks: media
+                        .auxiliary_tracks()
+                        .iter()
+                        .map(|stream| {
+                            format!(
+                                "#{} {} ({}, {})",
+                                stream.index,
+                                stream.codec_type,
+                                stream.codec_name,
+                                stream.codec_tag_string
+                            )
+                        })
+                        .collect(),
                     folder_name: source
                         .as_ref()
                         .and_then(|s| s.root.file_name())
@@ -423,27 +478,36 @@ impl Runtime {
                         .as_ref()
                         .map(|s| s.relative_path.to_string_lossy().into_owned()),
                 };
+                self.rejected
+                    .lock()
+                    .map_err(|_| "분석 결과 잠금 실패")?
+                    .remove(&actual_id);
                 self.inputs
                     .lock()
                     .map_err(|_| "파일 목록을 잠그지 못했습니다.")?
                     .insert(
                         actual_id,
                         Input {
+                            original_path: previous
+                                .as_ref()
+                                .map(|i| i.original_path.clone())
+                                .unwrap_or_else(|| path.clone()),
                             path,
                             modified: meta.modified().ok(),
                             item: item.clone(),
                             media,
                             folder_source: source,
+                            archived: previous.as_ref().is_some_and(|i| i.archived),
                         },
                     );
                 Ok::<_, String>(item)
             })();
             result.push(analysis.unwrap_or_else(|reason| {
-                FileItem {
+                let item = FileItem {
                     id,
                     version,
                     name,
-                    bytes: 0,
+                    bytes: fs::metadata(&path).map(|m| m.len()).unwrap_or(0),
                     duration: 0.0,
                     width: 0,
                     height: 0,
@@ -454,6 +518,7 @@ impl Runtime {
                     requires_mkv: false,
                     blocked: Some(reason),
                     notes: vec![],
+                    data_tracks: vec![],
                     folder_name: folder_source
                         .as_ref()
                         .and_then(|s| s.root.file_name())
@@ -461,7 +526,21 @@ impl Runtime {
                     relative_path: folder_source
                         .as_ref()
                         .map(|s| s.relative_path.to_string_lossy().into_owned()),
+                };
+                if let Ok(mut inputs) = self.inputs.lock() {
+                    inputs.remove(&item.id);
                 }
+                if let Ok(mut rejected) = self.rejected.lock() {
+                    rejected.insert(
+                        item.id.clone(),
+                        RejectedInput {
+                            path: path.clone(),
+                            folder_source: folder_source.clone(),
+                            item: item.clone(),
+                        },
+                    );
+                }
+                item
             }));
             checked(result.len());
         }
@@ -477,6 +556,14 @@ impl Runtime {
             .lock()
             .map_err(|_| "결과 목록을 잠그지 못했습니다.")?
             .remove(id);
+        self.rejected
+            .lock()
+            .map_err(|_| "분석 결과 잠금 실패")?
+            .remove(id);
+        self.reports
+            .lock()
+            .map_err(|_| "결과 기록 잠금 실패")?
+            .remove(id);
         Ok(())
     }
     pub fn clear(self: &Arc<Self>) -> Result<(), String> {
@@ -490,6 +577,14 @@ impl Runtime {
             .lock()
             .map_err(|_| "결과 목록을 잠그지 못했습니다.")?;
         inputs.clear();
+        self.rejected
+            .lock()
+            .map_err(|_| "분석 결과 잠금 실패")?
+            .clear();
+        self.reports
+            .lock()
+            .map_err(|_| "결과 기록 잠금 실패")?
+            .clear();
         outputs.clear();
         Ok(())
     }
@@ -501,6 +596,24 @@ impl Runtime {
             .and_then(|p| p.parent())
             .map(Path::to_path_buf)
             .ok_or_else(|| "저장된 결과가 없습니다.".into())
+    }
+    pub fn original_folder(&self, id: &str) -> Result<PathBuf, String> {
+        self.inputs
+            .lock()
+            .map_err(|_| "파일 목록 잠금 실패")?
+            .get(id)
+            .and_then(|input| input.path.parent())
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "원본 위치가 없습니다.".into())
+    }
+    pub fn report_folder(&self, id: &str) -> Result<PathBuf, String> {
+        self.reports
+            .lock()
+            .map_err(|_| "결과 기록 잠금 실패")?
+            .get(id)
+            .and_then(|path| path.parent())
+            .map(Path::to_path_buf)
+            .ok_or_else(|| "작업 기록이 없습니다.".into())
     }
     pub fn work(
         self: &Arc<Self>,
@@ -517,16 +630,20 @@ impl Runtime {
             .inputs
             .lock()
             .map_err(|_| "파일 목록을 잠그지 못했습니다.")?;
+        let rejected_inputs = self.rejected.lock().map_err(|_| "분석 결과 잠금 실패")?;
         let mut seen = HashSet::new();
-        let selected = ids
-            .into_iter()
-            .filter(|id| seen.insert(id.clone()))
-            .map(|id| {
-                inputs.get(&id).cloned().ok_or_else(|| {
-                    "목록에 등록되지 않은 영상입니다. 다시 추가해 주세요.".to_string()
-                })
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut selected = Vec::new();
+        let mut rejected = Vec::new();
+        for id in ids.into_iter().filter(|id| seen.insert(id.clone())) {
+            if let Some(input) = inputs.get(&id) {
+                selected.push(input.clone());
+            } else if let Some(input) = rejected_inputs.get(&id) {
+                rejected.push(input.clone());
+            } else {
+                return Err("목록에 등록되지 않은 영상입니다. 다시 추가해 주세요.".into());
+            }
+        }
+        drop(rejected_inputs);
         drop(inputs);
         let budget = WorkBudget::new(cpu_threads(), selected.len(), &settings)?;
         let context = BatchContext {
@@ -538,6 +655,66 @@ impl Runtime {
             capabilities: self.capabilities()?,
             threads: budget.threads_per_worker,
         };
+        for rejected in rejected {
+            let mut event = JobEvent {
+                run_id,
+                id: rejected.item.id.clone(),
+                kind,
+                phase: "error".into(),
+                progress: 1.0,
+                estimated_bytes: None,
+                output_bytes: None,
+                output_path: None,
+                message: rejected.item.blocked.clone(),
+                remaining_seconds: None,
+                backend: None,
+                backend_note: None,
+                archived_path: None,
+                original_moved: false,
+                archive_warning: None,
+                report_path: None,
+                stage: None,
+            };
+            if (settings.archive_originals || settings.organize_output) && kind == JobKind::Compress
+            {
+                match ArchivePlan::new(
+                    &rejected.path,
+                    rejected.folder_source.as_ref(),
+                    folder.as_deref().map(Path::new),
+                ) {
+                    Ok(plan) => {
+                        match archive::record_result(
+                            &plan,
+                            &ResultRecord {
+                                id: &rejected.item.id,
+                                name: &rejected.item.name,
+                                status: "분석 실패",
+                                source: &rejected.path,
+                                output: None,
+                                archive: None,
+                                message: rejected.item.blocked.as_deref(),
+                            },
+                        ) {
+                            Ok(path) => {
+                                event.report_path = Some(path.to_string_lossy().into_owned());
+                                self.reports
+                                    .lock()
+                                    .map_err(|_| "기록 잠금 실패")?
+                                    .insert(rejected.item.id, path);
+                            }
+                            Err(error) => {
+                                event.archive_warning =
+                                    Some(format!("작업 기록 저장 실패: {error}"))
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        event.archive_warning = Some(format!("작업 기록 저장 실패: {error}"))
+                    }
+                }
+            }
+            emit(event);
+        }
         crate::parallel::run(
             selected,
             budget.workers,
@@ -576,26 +753,57 @@ impl Runtime {
             message: None,
             remaining_seconds: None,
             backend: Some(profile.backend.label().into()),
+            archived_path: None,
+            original_moved: false,
+            archive_warning: None,
+            report_path: None,
+            stage: Some("encoding".into()),
             backend_note: context
                 .capabilities
                 .cpu_reason(&input.media, settings)
                 .map(str::to_string),
         };
+        let plan = if kind == JobKind::Compress
+            && (settings.archive_originals || settings.organize_output)
+        {
+            Some(ArchivePlan::new(
+                &input.original_path,
+                input.folder_source.as_ref(),
+                folder.map(Path::new),
+            ))
+        } else {
+            None
+        };
         if self.cancel.load(Ordering::Acquire) {
             event.phase = "cancelled".into();
             event.message = Some("취소됨".into());
             event.backend = None;
+            self.record_event(
+                &input,
+                plan.as_ref().and_then(|p| p.as_ref().ok()),
+                &mut event,
+            );
             emit(event);
             return;
         }
         emit(event.clone());
         let result = (|| {
+            if let Some(reason) = &input.media.blocked {
+                return Err(reason.clone().into());
+            }
+            let mut snapshot =
+                if settings.archive_originals && kind == JobKind::Compress && !input.archived {
+                    Some(SourceSnapshot::capture(&input.path)?)
+                } else {
+                    None
+                };
             let meta = fs::metadata(&input.path)
                 .map_err(|_| "원본을 찾을 수 없습니다. 파일을 다시 추가해 주세요.")?;
             if meta.len() != input.media.bytes || meta.modified().ok() != input.modified {
                 return Err("추가한 뒤 원본이 변경되었습니다. 파일을 다시 추가해 주세요.".into());
             }
             let recommended = if settings.recommendation {
+                event.stage = Some("recommendation".into());
                 event.backend_note = Some("현재 PC에 맞는 설정을 짧게 시험하고 있어요.".into());
                 emit(event.clone());
                 Some(crate::recommendation::recommend(
@@ -629,7 +837,9 @@ impl Runtime {
             }
             output_extension(&input.media, settings)?;
             let out = if kind == JobKind::Compress {
-                Some(if let Some(source) = &input.folder_source {
+                Some(if let Some(plan) = &plan {
+                    plan.as_ref().map_err(Clone::clone)?.results_dir()?
+                } else if let Some(source) = &input.folder_source {
                     source.output_dir(folder.map(Path::new))?
                 } else {
                     folder.map(PathBuf::from).unwrap_or_else(|| {
@@ -643,6 +853,7 @@ impl Runtime {
             } else {
                 None
             };
+            event.stage = Some("encoding".into());
             let result = run_with_cpu_fallback(profile, &self.cancel, |current, retried| {
                 if retried {
                     event.backend = Some(Backend::Cpu.label().into());
@@ -658,7 +869,11 @@ impl Runtime {
                     }
                     last = Instant::now();
                     let mut update = base.clone();
-                    update.progress = p;
+                    update.progress = if kind == JobKind::Compress && settings.archive_originals {
+                        p.min(0.98)
+                    } else {
+                        p
+                    };
                     if p > 0.01 && kind == JobKind::Compress {
                         update.remaining_seconds =
                             Some(start.elapsed().as_secs_f64() / p * (1.0 - p));
@@ -704,11 +919,51 @@ impl Runtime {
                         event.phase = "unchanged".into();
                         event.message = Some("원본 유지 · 압축 이득 없음".into());
                     }
+                    if result.saved {
+                        if let (Some(snapshot), Some(Ok(plan)), Some(path)) = (
+                            snapshot.as_mut(),
+                            plan.as_ref(),
+                            result.output_path.as_deref(),
+                        ) {
+                            event.stage = Some("archiving".into());
+                            event.progress = 0.99;
+                            event.remaining_seconds = None;
+                            emit(event.clone());
+                            let outcome = archive::move_original(
+                                snapshot,
+                                plan,
+                                Path::new(path),
+                                &self.cancel,
+                            );
+                            event.original_moved = outcome.moved;
+                            event.archived_path = outcome
+                                .path
+                                .as_ref()
+                                .map(|p| p.to_string_lossy().into_owned());
+                            event.archive_warning = outcome.warning;
+                            if outcome.moved {
+                                if let Some(path) = outcome.path {
+                                    match self.inputs.lock() {
+                                        Ok(mut inputs)=>if let Some(current)=inputs.get_mut(&input.item.id){current.modified=fs::metadata(&path).ok().and_then(|m|m.modified().ok());current.path=path;current.archived=true;},
+                                        Err(_)=>event.archive_warning=Some("압축·보관 완료, 앱 목록 갱신 실패. 기록된 보관 위치를 확인해 주세요.".into()),
+                                    }
+                                }
+                            }
+                        } else if input.archived {
+                            event.original_moved = true;
+                            event.archived_path = Some(input.path.to_string_lossy().into_owned());
+                        }
+                    }
                     if let Some(path) = result.output_path {
-                        self.outputs
-                            .lock()
-                            .map_err(|_| "결과 목록을 잠그지 못했습니다.")?
-                            .insert(input.item.id.clone(), PathBuf::from(path));
+                        match self.outputs.lock() {
+                            Ok(mut outputs) => {
+                                outputs.insert(input.item.id.clone(), PathBuf::from(path));
+                            }
+                            Err(_) => event.archive_warning = Some(
+                                "압축 완료, 결과 목록 갱신 실패. 결과 파일 위치를 확인해 주세요."
+                                    .into(),
+                            ),
+                        }
                     }
                 }
             }
@@ -720,6 +975,7 @@ impl Runtime {
                     event.phase = "done".into();
                 }
                 event.progress = 1.0;
+                event.stage = None;
             }
             Err(error) => {
                 event.phase = if self.cancel.load(Ordering::Acquire) {
@@ -735,6 +991,53 @@ impl Runtime {
                 });
             }
         }
+        self.record_event(
+            &input,
+            plan.as_ref().and_then(|p| p.as_ref().ok()),
+            &mut event,
+        );
         emit(event);
+    }
+    fn record_event(&self, input: &Input, plan: Option<&ArchivePlan>, event: &mut JobEvent) {
+        if let Some(plan) = plan {
+            let status = match event.phase.as_str() {
+                "done" if event.archive_warning.is_some() => "압축 성공 · 보관/기록 확인 필요",
+                "done" => "성공",
+                "unchanged" => "원본 유지 · 압축 이득 없음",
+                "cancelled" => "취소",
+                _ => "실패",
+            };
+            let message = event
+                .archive_warning
+                .as_deref()
+                .or(event.message.as_deref());
+            match archive::record_result(
+                plan,
+                &ResultRecord {
+                    id: &input.item.id,
+                    name: &input.item.name,
+                    status,
+                    source: &input.original_path,
+                    output: event.output_path.as_deref(),
+                    archive: event.archived_path.as_deref(),
+                    message,
+                },
+            ) {
+                Ok(path) => {
+                    event.report_path = Some(path.to_string_lossy().into_owned());
+                    if let Ok(mut reports) = self.reports.lock() {
+                        reports.insert(input.item.id.clone(), path);
+                    }
+                }
+                Err(error) => {
+                    let prefix = event
+                        .archive_warning
+                        .take()
+                        .map(|s| s + " · ")
+                        .unwrap_or_default();
+                    event.archive_warning = Some(prefix + "작업 기록 저장 실패: " + &error);
+                }
+            }
+        }
     }
 }

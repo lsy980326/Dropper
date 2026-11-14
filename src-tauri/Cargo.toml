@@ -1,6 +1,6 @@
 [package]
 name = "dropper"
-version = "0.2.3"
+version = "0.2.4"
 description = "간편한 로컬 영상 압축"
 edition = "2021"
 rust-version = "1.96"
@@ -26,6 +26,7 @@ tauri-build = { version = "2.6", features = [] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3"
+same-file = "1.0.6"
 tauri = { version = "2.11", features = [], optional = true }
 tauri-plugin-dialog = { version = "2.7", optional = true }
 

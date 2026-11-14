@@ -81,6 +81,37 @@ pub fn choose(results: &[Measurement], goal: Goal) -> Option<usize> {
         Goal::Size => 0.94,
         _ => 0.96,
     };
+    let valid = |r: &Measurement| {
+        r.similarity.is_finite()
+            && r.similarity >= threshold
+            && r.similarity <= 1.0
+            && r.bytes_per_frame.is_finite()
+            && r.bytes_per_frame > 0.0
+            && r.seconds_per_frame.is_finite()
+            && r.seconds_per_frame > 0.0
+    };
+    let fastest = results
+        .iter()
+        .filter(|r| valid(r))
+        .map(|r| r.seconds_per_frame)
+        .fold(f64::INFINITY, f64::min);
+    if goal == Goal::Size {
+        let smallest = results
+            .iter()
+            .filter(|r| valid(r) && r.seconds_per_frame <= fastest * 3.0)
+            .map(|r| r.bytes_per_frame)
+            .fold(f64::INFINITY, f64::min);
+        return results
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| {
+                valid(r)
+                    && r.seconds_per_frame <= fastest * 3.0
+                    && r.bytes_per_frame <= smallest * 1.05
+            })
+            .min_by(|(_, a), (_, b)| a.seconds_per_frame.total_cmp(&b.seconds_per_frame))
+            .map(|(i, _)| i);
+    }
     results
         .iter()
         .enumerate()
@@ -93,6 +124,7 @@ pub fn choose(results: &[Measurement], goal: Goal) -> Option<usize> {
                 && r.seconds_per_frame.is_finite()
                 && r.seconds_per_frame > 0.0
         })
+        .filter(|(_, r)| goal != Goal::Size || r.seconds_per_frame <= fastest * 3.0)
         .min_by(|(_, a), (_, b)| {
             let score = |r: &Measurement| match goal {
                 Goal::Speed => r.seconds_per_frame,
@@ -131,7 +163,6 @@ pub fn recommend(
         },
         effort: match settings.goal {
             Goal::Speed => Effort::Speed,
-            Goal::Size => Effort::Efficiency,
             _ => Effort::Balanced,
         },
         ..settings.clone()

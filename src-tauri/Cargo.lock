@@ -675,8 +675,9 @@ dependencies = [
 
 [[package]]
 name = "dropper"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
+ "same-file",
  "serde",
  "serde_json",
  "tauri",

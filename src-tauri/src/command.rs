@@ -42,6 +42,12 @@ pub struct Settings {
     pub effort: Effort,
     #[serde(default)]
     pub recommendation: bool,
+    #[serde(default)]
+    pub strip_data: bool,
+    #[serde(default)]
+    pub archive_originals: bool,
+    #[serde(default)]
+    pub organize_output: bool,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
@@ -75,11 +81,14 @@ pub enum Acceleration {
     Apple,
 }
 
-pub const DEMUXERS: &str = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,flv,mpeg,mpegts,ogg";
+pub const DEMUXERS: &str = "mov,mp4,m4a,3gp,3g2,mj2,matroska,webm,avi,asf,flv,mpeg,mpegts,ogg,mxf";
 
 pub fn output_extension(media: &Media, settings: &Settings) -> Result<&'static str, String> {
     if let Some(reason) = &media.blocked {
         return Err(reason.clone());
+    }
+    if !settings.strip_data && !media.auxiliary_tracks().is_empty() {
+        return Err(format!("부가 데이터 트랙이 있습니다: {}. 부가 데이터 제외를 선택하면 원본에 보관하고 압축할 수 있습니다.",media.auxiliary_summary()));
     }
     if media.hdr.is_some() && settings.codec != Codec::H265 {
         return Err("HDR 영상은 색 정보 보존을 위해 H.265를 선택해 주세요.".into());
@@ -219,6 +228,11 @@ pub fn encode_args_with_profile(
         0
     } else {
         pair(&mut args, "-map", "0");
+        if settings.strip_data {
+            for stream in media.auxiliary_tracks() {
+                pair(&mut args, "-map", format!("-0:{}", stream.index));
+            }
+        }
         pair(&mut args, "-c", "copy");
         media
             .streams
@@ -277,6 +291,9 @@ pub fn encode_args_with_profile(
         );
     }
     if sample.is_none() && extension == "mp4" {
+        if settings.strip_data {
+            pair(&mut args, "-write_tmcd", "0");
+        }
         pair(&mut args, "-movflags", "+faststart");
         if settings.codec == Codec::H265 {
             pair(&mut args, &format!("-tag:v:{ordinal}"), "hvc1");
