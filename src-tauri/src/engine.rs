@@ -330,7 +330,7 @@ impl Tools {
             &mut |seconds| progress((seconds / media.duration).clamp(0.0, 0.99)),
         )?;
         let output = self.probe(temp.path(), cancel)?;
-        validate_output(media, &output)?;
+        validate_output(media, &output, settings)?;
         let after =
             fs::metadata(&path).map_err(|_| "압축 중 원본 파일이 이동하거나 삭제되었습니다.")?;
         if before.len() != after.len() || before.modified().ok() != after.modified().ok() {
@@ -384,7 +384,10 @@ impl Tools {
     }
 }
 
-fn validate_output(source: &Media, output: &Media) -> Result<(), String> {
+fn validate_output(source: &Media, output: &Media, settings: &Settings) -> Result<(), String> {
+    if settings.strip_data && !output.auxiliary_tracks().is_empty() {
+        return Err("결과 영상의 부가 데이터 제외를 확인하지 못해 저장하지 않았습니다.".into());
+    }
     if (output.duration - source.duration).abs() > 0.5_f64.max(source.duration * 0.01) {
         return Err("결과 영상의 재생 시간이 원본과 달라 저장하지 않았습니다.".into());
     }

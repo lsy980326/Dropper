@@ -2,7 +2,7 @@ import { test, expect, chromium } from '@playwright/test';
 import type { Browser } from '@playwright/test';
 import { spawn, execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Environment } from '../../src/bridge';
 import type { JobEvent } from '../../src/model';
@@ -30,6 +30,7 @@ test('installed Windows app opens offline and compresses using its bundled engin
   execFileSync(ffmpeg, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
     'testsrc2=size=1280x720:rate=24', '-t', '20', '-c:v', 'ffv1', '-y', input]);
   copyFileSync(input, secondInput);
+  const originalBytes = statSync(input).size;
   const originalHash = createHash('sha256').update(readFileSync(input)).digest('hex');
   const serverRunning = await fetch('http://127.0.0.1:1420', { signal: AbortSignal.timeout(1000) })
     .then(() => true, () => false);
@@ -102,10 +103,13 @@ test('installed Windows app opens offline and compresses using its bundled engin
     expect(peak).toBe(Math.min(2,environment.cpuThreads));
     expect(events.filter(event=>event.phase==='done')).toHaveLength(2);
     expect(events.filter(event=>event.phase==='done').every(event=>!!event.backend)).toBe(true);
-    const results = readdirSync(output).filter(name => name.endsWith('.mp4'));
+    const resultsFolder = join(output, 'Results');
+    const originalsFolder = join(output, 'Originals');
+    expect(events.filter(event => event.phase === 'done').every(event => event.originalMoved && !event.archiveWarning)).toBe(true);
+    const results = readdirSync(resultsFolder).filter(name => name.endsWith('.mp4'));
     expect(results).toHaveLength(2);
-    const compressed = join(output, results[0]);
-    expect(statSync(compressed).size).toBeLessThan(statSync(input).size);
+    const compressed = join(resultsFolder, results[0]);
+    expect(statSync(compressed).size).toBeLessThan(originalBytes);
     const probe = JSON.parse(execFileSync(ffprobe, ['-v', 'error', '-show_streams', '-show_format',
       '-of', 'json', compressed], { encoding: 'utf8' })) as {
         streams: Array<{ codec_type: string; codec_name: string; width: number; height: number }>;
@@ -114,8 +118,11 @@ test('installed Windows app opens offline and compresses using its bundled engin
     expect(probe.streams.find(stream => stream.codec_type === 'video'))
       .toMatchObject({ codec_name: 'h264', width: 1280, height: 720 });
     expect(Number(probe.format.duration)).toBeCloseTo(20, 1);
-    expect(createHash('sha256').update(readFileSync(input)).digest('hex')).toBe(originalHash);
-    expect(createHash('sha256').update(readFileSync(secondInput)).digest('hex')).toBe(originalHash);
+    expect(createHash('sha256').update(readFileSync(join(originalsFolder, '원본 영상.mkv'))).digest('hex')).toBe(originalHash);
+    expect(createHash('sha256').update(readFileSync(join(originalsFolder, '두 번째 영상.mkv'))).digest('hex')).toBe(originalHash);
+    expect(existsSync(input)).toBe(false);
+    expect(existsSync(secondInput)).toBe(false);
+    expect(readFileSync(join(output, 'Dropper-results.csv'), 'utf8')).toContain('성공');
     console.log('Installed app: embedded UI, no dev server, real drop/import, Auto device, parallel Start-button compression and original preservation passed.');
   } catch (error) {
     console.error('Installed app startup diagnostics', {

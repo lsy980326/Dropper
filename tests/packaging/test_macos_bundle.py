@@ -21,7 +21,7 @@ class MacBundleTests(unittest.TestCase):
         (media/'licenses').mkdir()
         (media/'licenses'/'COPYING').write_text('fixture license')
         for name in ['ffmpeg','ffprobe']:(media/'bin'/name).write_bytes(name.encode())
-        files={str(p.relative_to(media)):hashlib.sha256(p.read_bytes()).hexdigest() for p in media.rglob('*') if p.is_file()}
+        files={p.relative_to(media).as_posix():hashlib.sha256(p.read_bytes()).hexdigest() for p in media.rglob('*') if p.is_file()}
         (media/'manifest.json').write_text(json.dumps({'architecture':'arm64','files':files}))
         return media
 

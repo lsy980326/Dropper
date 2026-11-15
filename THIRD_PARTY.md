@@ -2,13 +2,13 @@
 
 Dropper는 FFmpeg/ffprobe를 별도 프로세스로 실행합니다. 동봉된 FFmpeg와 x264/x265 구성은 GPL 조건을 따르며, 각 구성 요소의 원래 라이선스·저작권 고지를 유지합니다. 앱 자체 코드의 라이선스는 별도로 지정하지 않았습니다.
 
-## v0.2.0–v0.2.3 대응 소스 다운로드
+## v0.2.0–v0.2.4 대응 소스 다운로드
 
 [v0.2.0 릴리스](https://github.com/lsy980326/Dropper/releases/tag/v0.2.0)에서 소스·패치·빌드 방법·고지·체크섬을 추가 비용 없이 받습니다. 아래 소스 파일은 엔진 검토·재빌드용이며, 앱을 설치하고 사용하는 데는 필요하지 않습니다.
 
-Windows v0.2.1·v0.2.2·v0.2.3의 FFmpeg/ffprobe는 v0.2.0에 포함된 실행 파일과 SHA256이 동일하며 아래 대응 소스를 함께 사용합니다. Windows 빌드는 변경되는 latest URL 대신 동일 바이너리가 들어 있는 고정 배포 아카이브를 검증해 받습니다.
+Windows v0.2.1·v0.2.2·v0.2.3·v0.2.4의 FFmpeg/ffprobe는 v0.2.0에 포함된 실행 파일과 SHA256이 동일하며 아래 대응 소스를 함께 사용합니다. Windows 빌드는 변경되는 latest URL 대신 동일 바이너리가 들어 있는 고정 배포 아카이브를 검증해 받습니다.
 
-Mac v0.2.3도 v0.2.0의 대응 소스가 제공된 엔진을 재사용합니다. Apple Silicon은 기존 설치 이미지의 엔진·라이브러리·고지를 체크섬으로 확인해 그대로 포함하고, Intel은 고정된 자체 빌드 아카이브를 검증해 재패키징합니다. 앱 전체에는 임시 서명을 적용하며 엔진의 빌드 구성과 대응 소스는 바꾸지 않습니다.
+Mac v0.2.3·v0.2.4도 v0.2.0의 대응 소스가 제공된 엔진을 재사용합니다. Apple Silicon은 기존 설치 이미지의 엔진·라이브러리·고지를 체크섬으로 확인해 그대로 포함하고, Intel은 고정된 자체 빌드 아카이브를 검증해 재패키징합니다. 앱 전체에는 임시 서명을 적용하며 엔진의 빌드 구성과 대응 소스는 바꾸지 않습니다.
 
 | 설치 파일 | FFmpeg 엔진 | 대응 소스 |
 |---|---|---|
@@ -28,3 +28,5 @@ Windows 소스는 파일당 2GiB 제한 때문에 **기본 묶음과 OpenSSL 원
 - [x264](https://www.videolan.org/developers/x264.html) · [x265](https://www.videolan.org/developers/x265.html) · [SVT-AV1](https://gitlab.com/AOMediaCodec/SVT-AV1) · [dav1d](https://code.videolan.org/videolan/dav1d)
 - [Windows FFmpeg 빌드 제공자](https://github.com/FFmpeg-Builds/FFmpeg-Builds) · [GCC Runtime Library Exception](https://www.gnu.org/licenses/gcc-exception-3.1.html)
 - [Tauri](https://github.com/tauri-apps/tauri) (MIT/Apache-2.0) · [React](https://github.com/facebook/react) (MIT) · [Lucide](https://lucide.dev/license) (ISC)
+
+- [same-file](https://github.com/BurntSushi/same-file) (MIT/Unlicense) · 원본과 보관 사본의 파일 식별 검증

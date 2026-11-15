@@ -75,8 +75,17 @@ fn cancel_active(state: State<'_, Arc<Runtime>>) {
     state.cancel.store(true, Ordering::Release);
 }
 #[tauri::command]
-fn reveal_output(id: String, state: State<'_, Arc<Runtime>>) -> Result<(), String> {
-    let path = state.output_folder(&id)?;
+fn reveal_output(
+    id: String,
+    target: Option<String>,
+    state: State<'_, Arc<Runtime>>,
+) -> Result<(), String> {
+    let path = match target.as_deref() {
+        None | Some("output") => state.output_folder(&id)?,
+        Some("original") => state.original_folder(&id)?,
+        Some("report") => state.report_folder(&id)?,
+        _ => return Err("열 수 없는 결과 종류입니다.".into()),
+    };
     #[cfg(target_os = "macos")]
     let mut command = std::process::Command::new("/usr/bin/open");
     #[cfg(target_os = "windows")]

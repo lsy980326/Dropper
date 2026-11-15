@@ -90,13 +90,6 @@ impl Media {
             Some("HDR10+ 동적 메타데이터 보존이 지원되지 않습니다.".into())
         } else if videos.len() != 1 {
             Some("여러 영상 트랙이 있는 파일은 지원하지 않습니다. 오디오와 자막은 여러 트랙도 지원합니다.".into())
-        } else if streams.iter().any(|s| {
-            !matches!(
-                s.codec_type.as_str(),
-                "video" | "audio" | "subtitle" | "attachment"
-            )
-        }) {
-            Some("보존 여부를 확인할 수 없는 데이터 트랙이 있습니다.".into())
         } else if !matches!(video.field_order.as_str(), "" | "unknown" | "progressive") {
             Some("인터레이스 영상은 지원하지 않습니다.".into())
         } else if ["yuva", "rgba", "argb", "bgra", "gbrap", "abgr"]
@@ -127,6 +120,39 @@ impl Media {
             "video" => s.disposition["attached_pic"].as_i64() == Some(1),
             _ => false,
         })
+    }
+    pub fn auxiliary_tracks(&self) -> Vec<&Stream> {
+        self.streams
+            .iter()
+            .filter(|s| {
+                !matches!(
+                    s.codec_type.as_str(),
+                    "video" | "audio" | "subtitle" | "attachment"
+                )
+            })
+            .collect()
+    }
+    pub fn auxiliary_summary(&self) -> String {
+        self.auxiliary_tracks()
+            .iter()
+            .map(|s| {
+                format!(
+                    "#{} {}{}",
+                    s.index,
+                    if s.codec_name.is_empty() {
+                        "미확인"
+                    } else {
+                        &s.codec_name
+                    },
+                    if s.codec_tag_string.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", s.codec_tag_string)
+                    }
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
     }
     pub fn audio_bps(&self) -> Option<u64> {
         self.streams

@@ -2,26 +2,26 @@ export type Quality = 'high' | 'balanced' | 'small';
 export type Codec = 'h264' | 'h265' | 'av1';
 export type Container = 'auto' | 'mp4' | 'mkv';
 export type Goal = 'speed' | 'balanced' | 'quality' | 'size';
-export type Settings = { quality: Quality; codec: Codec; container: Container; acceleration: 'auto' | 'cpu' | 'nvidia' | 'intel' | 'amd' | 'apple'; goal: Goal; effort: 'speed' | 'balanced' | 'efficiency'; recommendation: boolean; parallelism: 0 | 1 | 2 | 4 };
+export type Settings = { quality: Quality; codec: Codec; container: Container; acceleration: 'auto' | 'cpu' | 'nvidia' | 'intel' | 'amd' | 'apple'; goal: Goal; effort: 'speed' | 'balanced' | 'efficiency'; recommendation: boolean; stripData:boolean; archiveOriginals:boolean; organizeOutput:boolean; parallelism: 0 | 1 | 2 | 4 };
 export type FileItem = {
   id: string; version: number; name: string; bytes: number; duration: number; width: number; height: number;
   codec: string; hdr: string | null; audioCount: number; subtitleCount: number;
-  requiresMkv: boolean; blocked: string | null; notes: string[];
+  dataTracks?:string[]; requiresMkv: boolean; blocked: string | null; notes: string[];
   folderName?: string | null; relativePath?: string | null;
 };
 export type Phase = 'ready' | 'processing' | 'done' | 'error' | 'cancelled' | 'unchanged';
 export type Row = FileItem & {
   phase: Phase; progress: number; estimatedBytes?: number; outputBytes?: number;
   outputPath?: string; message?: string; remainingSeconds?: number;
-  backend?: string; backendNote?: string;
+  backend?: string; backendNote?: string; archivedPath?:string; originalMoved?:boolean; archiveWarning?:string; reportPath?:string;stage?:'recommendation'|'encoding'|'archiving';
 };
 export type JobEvent = {
   runId: number; id: string; kind: 'estimate' | 'compress'; phase: Phase;
   progress: number; estimatedBytes?: number; outputBytes?: number;
   outputPath?: string; message?: string; remainingSeconds?: number;
-  backend?: string; backendNote?: string;
+  backend?: string; backendNote?: string; archivedPath?:string; originalMoved?:boolean; archiveWarning?:string; reportPath?:string;stage?:'recommendation'|'encoding'|'archiving';
 };
-export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', codec: 'h265', container: 'auto', acceleration: 'auto', parallelism: 0, goal: 'balanced', effort: 'balanced', recommendation: true };
+export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', codec: 'h265', container: 'auto', acceleration: 'auto', parallelism: 0, goal: 'balanced', effort: 'balanced', recommendation: true, stripData:true, archiveOriginals:true, organizeOutput:true };
 export function pendingRows(rows:Row[]):Row[]{ return rows.filter(row=>!row.blocked&&row.phase!=='done'&&row.phase!=='unchanged'); }
 
 export function applyEvent(rows: Row[], event: JobEvent, runId: number): Row[] {
@@ -39,15 +39,15 @@ export function applyEvent(rows: Row[], event: JobEvent, runId: number): Row[] {
         remainingSeconds:undefined};
     }
     return {...row,backend,backendNote,estimatedBytes,phase:event.phase,progress:event.progress,outputBytes:event.outputBytes,
-      outputPath:event.outputPath,message:event.message,remainingSeconds:event.remainingSeconds};
+      outputPath:event.outputPath,message:event.message,remainingSeconds:event.remainingSeconds,archivedPath:event.archivedPath??row.archivedPath,originalMoved:event.originalMoved??row.originalMoved,archiveWarning:event.archiveWarning,reportPath:event.reportPath??row.reportPath,stage:event.stage};
   });
 }
 export function invalidate(rows: Row[]): Row[] {
-  return rows.map(row=>({...row,phase:'ready',progress:0,estimatedBytes:undefined,
-    outputBytes:undefined,outputPath:undefined,message:undefined,remainingSeconds:undefined,backend:undefined,backendNote:undefined}));
+  return rows.map(row=>row.originalMoved&&row.phase==='done'?row:({...row,phase:'ready',progress:0,estimatedBytes:undefined,
+    outputBytes:undefined,outputPath:undefined,message:undefined,remainingSeconds:undefined,backend:undefined,backendNote:undefined,archiveWarning:undefined,reportPath:undefined}));
 }
 export function applySettingsChange(rows:Row[],change:Partial<Settings>):Row[]{
-  return change.quality!==undefined||change.codec!==undefined||change.container!==undefined||change.acceleration!==undefined||change.goal!==undefined||change.effort!==undefined||change.recommendation!==undefined?invalidate(rows):rows;
+  return change.quality!==undefined||change.codec!==undefined||change.container!==undefined||change.acceleration!==undefined||change.goal!==undefined||change.effort!==undefined||change.recommendation!==undefined||change.stripData!==undefined||change.archiveOriginals!==undefined?invalidate(rows):rows;
 }
 export function totals(rows: Row[]): { original: number; output: number; percent: number | null; complete: boolean } {
   const finished=rows.filter(row=>row.phase==='done'||row.phase==='unchanged');
@@ -81,4 +81,15 @@ export function batchProgress(rows:Row[], ids:string[]):{percent:number;finished
   }
   const percent=weight>0?Math.floor(done/weight*100):0;
   return {percent:finished===ids.length?100:Math.min(99,percent),finished,total:ids.length};
+}
+
+export type ResultFilter='all'|'success'|'failed'|'kept';
+export function matchesFilter(row:Row,filter:ResultFilter):boolean{
+  if(filter==='success')return row.phase==='done';
+  if(filter==='failed')return !!row.blocked||row.phase==='error';
+  if(filter==='kept')return row.phase==='unchanged'||row.phase==='cancelled';
+  return true;
+}
+export function outcomeCounts(rows:Row[]){
+ return {success:rows.filter(r=>matchesFilter(r,'success')).length,failed:rows.filter(r=>matchesFilter(r,'failed')).length,kept:rows.filter(r=>matchesFilter(r,'kept')).length,pending:rows.filter(r=>!r.blocked&&(r.phase==='ready'||r.phase==='processing')).length,warnings:rows.filter(r=>!!r.archiveWarning).length};
 }

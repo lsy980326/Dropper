@@ -17,6 +17,7 @@ pub struct FolderScan {
     pub warnings: Vec<String>,
     pub skipped_results: usize,
     pub skipped_links: usize,
+    pub ignored_files: usize,
 }
 
 pub fn scan(
@@ -40,6 +41,7 @@ pub fn scan(
         warnings: vec![],
         skipped_results: 0,
         skipped_links: 0,
+        ignored_files: 0,
     };
     let mut pending = vec![root.clone()];
     while let Some(directory) = pending.pop() {
@@ -96,11 +98,8 @@ pub fn scan(
                 continue;
             }
             if kind.is_dir() {
-                if entry
-                    .file_name()
-                    .to_string_lossy()
-                    .eq_ignore_ascii_case("Compressed")
-                    || exclude.is_some_and(|base| path.starts_with(base))
+                if is_output(&path)
+                    || exclude.is_some_and(|base| path.starts_with(base) && is_output(base))
                 {
                     result.skipped_results += 1;
                     continue;
@@ -117,6 +116,8 @@ pub fn scan(
                         path.display()
                     )),
                 }
+            } else if kind.is_file() {
+                result.ignored_files += 1;
             }
         }
     }
@@ -125,13 +126,13 @@ pub fn scan(
     Ok(result)
 }
 
-fn is_video(path: &Path) -> bool {
+pub fn is_video(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .is_some_and(|extension| {
             [
                 "mp4", "mov", "mkv", "avi", "webm", "wmv", "flv", "mpeg", "mpg", "ts", "mts",
-                "m2ts", "m4v", "3gp",
+                "m2ts", "m4v", "3gp", "3g2", "mxf", "asf", "vob", "ogv", "m2t", "mpe", "qt", "f4v",
             ]
             .iter()
             .any(|candidate| extension.eq_ignore_ascii_case(candidate))
@@ -177,16 +178,45 @@ impl FolderSource {
         .canonicalize()
         .map_err(|e| e.to_string())?;
         let destination = base.join(self.relative_path.parent().unwrap_or(Path::new("")));
-        let relative = destination
-            .strip_prefix(&anchor)
-            .map_err(|_| "결과 경로가 저장 폴더를 벗어났습니다.")?;
-        let mut current = anchor;
-        for part in relative.components() {
-            let Component::Normal(part) = part else {
-                return Err("결과 경로가 올바르지 않습니다.".into());
-            };
-            current.push(part);
-            match fs::symlink_metadata(&current){
+        safe_directory(&anchor, &destination)
+    }
+}
+
+pub const OUTPUT_MARKER: &str = ".dropper-output";
+pub fn is_output(path: &Path) -> bool {
+    let marker = path.join(OUTPUT_MARKER);
+    fs::symlink_metadata(&marker)
+        .is_ok_and(|m| m.is_file() && !m.file_type().is_symlink() && m.len() == 18)
+        && fs::read(marker).is_ok_and(|bytes| bytes == b"dropper-output-v1\n")
+}
+pub fn mark_output(path: &Path) -> Result<(), String> {
+    use std::io::Write;
+    let marker = path.join(OUTPUT_MARKER);
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+    {
+        Ok(mut f) => f
+            .write_all(b"dropper-output-v1\n")
+            .and_then(|_| f.sync_all())
+            .map_err(|e| e.to_string()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && is_output(path) => Ok(()),
+        Err(e) => Err(format!("결과 폴더 표시를 저장하지 못했습니다: {e}")),
+    }
+}
+
+pub fn safe_directory(anchor: &Path, destination: &Path) -> Result<PathBuf, String> {
+    let relative = destination
+        .strip_prefix(&anchor)
+        .map_err(|_| "결과 경로가 저장 폴더를 벗어났습니다.")?;
+    let mut current = anchor.canonicalize().map_err(|e| e.to_string())?;
+    for part in relative.components() {
+        let Component::Normal(part) = part else {
+            return Err("결과 경로가 올바르지 않습니다.".into());
+        };
+        current.push(part);
+        match fs::symlink_metadata(&current){
                 Ok(meta) if meta.is_dir()&&!meta.file_type().is_symlink()=>{},
                 Ok(_)=>return Err("결과 폴더 경로에 파일 또는 심볼릭 링크가 있습니다. 다른 저장 위치를 선택해 주세요.".into()),
                 Err(error) if error.kind()==std::io::ErrorKind::NotFound=>match fs::create_dir(&current) {
@@ -200,7 +230,6 @@ impl FolderSource {
                 },
                 Err(error)=>return Err(format!("결과 폴더를 확인하지 못했습니다: {error}")),
             }
-        }
-        Ok(current)
     }
+    Ok(current)
 }

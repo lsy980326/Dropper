@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowDown, ArrowDownToLine, ArrowRight, Check, ChevronDown, ChevronLeft, ChevronRight, FileVideo2, Folder, FolderOpen, FolderPlus, Plus, ShieldCheck, Trash2, TriangleAlert, X } from 'lucide-react';
 import WorkView from './WorkView';
 import { bridge, desktop, type Environment, type ImportProgress } from './bridge';
-import { applyEvent, applySettingsChange, batchProgress, DEFAULT_SETTINGS, formatBytes, formatDuration, pendingRows, totals, type FileItem, type Row, type Settings } from './model';
+import { applyEvent, applySettingsChange, batchProgress, outcomeCounts, matchesFilter, DEFAULT_SETTINGS, formatBytes, formatDuration, pendingRows, totals, type FileItem, type Row, type Settings, type ResultFilter } from './model';
 
 const goals = [
   {value:'speed',quality:'balanced',effort:'speed',label:'속도 우선',description:'기다림을 더 짧게'},
   {value:'balanced',quality:'balanced',effort:'balanced',label:'균형',description:'화질·시간·용량을 고르게'},
   {value:'quality',quality:'high',effort:'balanced',label:'화질 우선',description:'디테일을 더 선명하게'},
-  {value:'size',quality:'small',effort:'efficiency',label:'용량 우선',description:'시간이 걸려도 더 작게'},
+  {value:'size',quality:'small',effort:'balanced',label:'용량 우선',description:'오래 기다리지 않고 더 작게'},
 ] as const;
 type Operation = 'adding' | 'estimate' | 'compress' | null;
 const errorText=(error:unknown)=>error instanceof Error?error.message:String(error);
@@ -27,6 +27,7 @@ export default function App() {
   const [importNotice,setImportNotice]=useState<string|null>(null);
   const [importWarnings,setImportWarnings]=useState<string[]>([]);
   const [page,setPage]=useState(0);
+  const [resultFilter,setResultFilter]=useState<ResultFilter>('all');
   const [showDetails,setShowDetails]=useState(false);
   const [batchIds,setBatchIds]=useState<string[]>([]);
   const busyRef=useRef(false);
@@ -65,9 +66,12 @@ export default function App() {
         for(const item of result.files)if(byId.get(item.id)?.version!==item.version)byId.set(item.id,toRow(item));
         return [...byId.values()];
       });
-      setPage(0);
+      setPage(0);setResultFilter('all');
       if(result.folderCount>0||result.cancelled||result.warnings.length>0||result.skippedLinks>0){
+        const failed=result.files.filter(file=>file.blocked).length;
         const summary=[result.cancelled?'추가 취소':result.folderCount>0?'하위 폴더 포함':'파일 추가',`영상 ${result.files.length}개 확인`];
+        if(failed>0)summary.push(`분석 실패 ${failed}개 · 실패 필터에서 확인`);
+        if((result.ignoredFiles??0)>0)summary.push(`지원 목록 외 파일 ${result.ignoredFiles}개 제외`);
         if(result.skippedResults>0)summary.push(`기존 결과 폴더 ${result.skippedResults}개 제외`);
         if(result.skippedLinks>0)summary.push(`링크 ${result.skippedLinks}개 제외`);
         if(result.warnings.length>0)summary.push(`읽기 오류 ${result.warnings.length}개`);
@@ -111,11 +115,11 @@ export default function App() {
   const run=async(kind:'estimate'|'compress')=>{
     if(busyRef.current||!ready)return;
     const eligible=pendingRows(rows);
-    if(!eligible.length)return;
+    if(!eligible.length&&!(kind==='compress'&&rows.some(row=>row.blocked)))return;
     busyRef.current=true;setShowDetails(false);setOperation(kind);setError(null);setCancelling(false);
     const id=++runId.current;
-    const selected=new Set(eligible.map(row=>row.id));
-    setBatchIds([...selected]);
+    const selected=new Set([...eligible.map(row=>row.id),...(kind==='compress'?rows.filter(row=>row.blocked).map(row=>row.id):[])]);
+    setBatchIds([...selected]);setResultFilter('all');
     setRows(current=>current.map(row=>selected.has(row.id)?{...row,phase:'ready',progress:0,message:undefined,remainingSeconds:undefined,
       ...(kind==='estimate'?{estimatedBytes:undefined}:{outputBytes:undefined,outputPath:undefined,...(settings.recommendation?{estimatedBytes:undefined}:{})})}:row));
     try{await bridge.run([...selected],settings,folder,kind,id);}
@@ -141,22 +145,26 @@ export default function App() {
   const pending=pendingRows(rows);
   const totalBytes=rows.reduce((sum,row)=>sum+row.bytes,0);
   const codecAvailable=environment?.codecs.includes(settings.codec)??false;
-  const hasHdr=candidates.some(row=>row.hdr!==null);
-  const configurationValid=settings.recommendation||codecAvailable&&(!hasHdr||settings.codec==='h265');
+  const hasHdr=pending.some(row=>row.hdr!==null);
+  const hasData=pending.some(row=>(row.dataTracks?.length??0)>0);
+  const configurationValid=(!hasData||settings.stripData)&&(settings.recommendation||codecAvailable&&(!hasHdr||settings.codec==='h265'));
+  const outcomes=outcomeCounts(rows);
+  const reportRow=rows.find(row=>!!row.reportPath);
+  const filteredRows=rows.filter(row=>matchesFilter(row,resultFilter));
   const activeRows=rows.filter(row=>row.phase==='processing');
   const active=activeRows[0];
   const gpu=environment?.gpuEncoders.find(encoder=>encoder.codec===settings.codec&&(settings.acceleration==='auto'||settings.acceleration===encoder.backend));
   const deviceName=settings.acceleration==='cpu'||!gpu?'CPU':`GPU · ${{nvidia:'NVIDIA',intel:'Intel',amd:'AMD',apple:'Apple'}[gpu.backend]}`;
   const concurrentLimit=environment?Math.min(settings.parallelism||(environment.cpuThreads>=4?2:1),environment.cpuThreads):null;
   const hasFolder=rows.some(row=>!!row.folderName);
-  const pageCount=Math.max(1,Math.ceil(rows.length/50));
+  const pageCount=Math.max(1,Math.ceil(filteredRows.length/50));
   const currentPage=Math.min(page,pageCount-1);
-  const visibleRows=rows.slice(currentPage*50,currentPage*50+50);
+  const visibleRows=filteredRows.slice(currentPage*50,currentPage*50+50);
   const selectedIds=new Set(batchIds);
   const batchFinished=rows.filter(row=>selectedIds.has(row.id)&&['done','unchanged','error','cancelled'].includes(row.phase)).length;
 
   const progress=batchProgress(rows,batchIds);
-  if(operation==='compress'&&!showDetails) return <WorkView progress={progress} cancelling={cancelling} hasError={!!error} onDetails={()=>setShowDetails(true)} onCancel={()=>void cancel()}/>;
+  if(operation==='compress'&&!showDetails) return <WorkView outcomes={outcomeCounts(rows.filter(row=>selectedIds.has(row.id)))} archiveOriginals={settings.archiveOriginals} progress={progress} cancelling={cancelling} hasError={!!error} onDetails={()=>setShowDetails(true)} onCancel={()=>void cancel()}/>;
 
   return <div className="app-shell" onDragOver={event=>event.preventDefault()} onDrop={event=>event.preventDefault()}>
     <header className="app-header">
@@ -173,6 +181,7 @@ export default function App() {
       {error&&<div className="notice error-notice" role="alert"><TriangleAlert size={17}/><span>{error}</span><button className="icon-button" aria-label="안내 닫기" onClick={()=>setError(null)}><X size={16}/></button></div>}
       {importNotice&&<div className="notice import-notice" role="status">{importWarnings.length>0?<details><summary>{importNotice}</summary>{importWarnings.map((warning,index)=><p key={index}>{warning}</p>)}</details>:<span>{importNotice}</span>}</div>}
 
+      {rows.length>0&&<div className="outcome-toolbar"><nav className="outcome-filters" aria-label="결과 필터">{([['all','전체',rows.length],['success','성공',outcomes.success],['failed','실패',outcomes.failed],['kept','원본 유지',outcomes.kept]] as const).map(([value,label,count])=><button key={value} type="button" aria-pressed={resultFilter===value} onClick={()=>{setResultFilter(value);setPage(0);}}>{label}<span>{count}</span></button>)}</nav>{reportRow&&!busy&&<button className="text-button" onClick={()=>void bridge.reveal(reportRow.id,'report').catch(e=>setError(errorText(e)))}><FolderOpen size={14}/>작업 기록</button>}</div>}
       <section className={`workspace ${dragging&&!busy?'is-dragging':''}`} aria-label="영상 파일">
         {rows.length===0?<><button className="drop-zone" onClick={()=>void chooseFiles()} disabled={busy||desktop&&!ready}>
           <span className="drop-symbol" aria-hidden="true"><FileVideo2 size={33} strokeWidth={1.5}/><span><Plus size={13}/></span></span>
@@ -181,8 +190,8 @@ export default function App() {
           <span className="format-hint">MP4, MOV, MKV, AVI, WebM 외 주요 영상 형식</span>
         </button><div className="empty-import-actions"><button className="text-button" onClick={()=>void chooseSourceFolder()} disabled={busy||desktop&&!ready}><FolderPlus size={16}/>폴더 추가</button><span>하위 폴더의 영상까지 한 번에</span></div></>:<>
           <div className="list-toolbar"><span>영상 <strong>{rows.length}</strong>개 <span className="toolbar-size">{formatBytes(totalBytes)}</span></span><div><button className="text-button" onClick={()=>void clear()} disabled={busy}><Trash2 size={14}/>비우기</button><button className="text-button" onClick={()=>void chooseSourceFolder()} disabled={busy||!ready}><FolderPlus size={15}/>폴더 추가</button><button className="text-button" onClick={()=>void chooseFiles()} disabled={busy||!ready}><Plus size={16}/>파일 추가</button></div></div>
-          <div className="file-list">{visibleRows.map(row=><FileRow key={row.id} row={row} operation={operation} busy={busy} onRemove={()=>void remove(row.id)} onReveal={()=>{void bridge.reveal(row.id).catch(e=>setError(errorText(e)));}}/>)}</div>
-          {pageCount>1&&<div className="file-pagination"><span>{currentPage*50+1}–{Math.min(rows.length,currentPage*50+50)} / {rows.length}개 · 압축은 전체 목록에 적용</span><div><button className="icon-button" aria-label="이전 영상 목록" disabled={currentPage===0} onClick={()=>setPage(currentPage-1)}><ChevronLeft size={16}/></button><button className="icon-button" aria-label="다음 영상 목록" disabled={currentPage===pageCount-1} onClick={()=>setPage(currentPage+1)}><ChevronRight size={16}/></button></div></div>}
+          <div className="file-list">{visibleRows.length===0&&<p className="empty-filter">이 상태의 영상이 없습니다.</p>}{visibleRows.map(row=><FileRow key={row.id} row={row} stripData={settings.stripData} operation={operation} busy={busy} onRemove={()=>void remove(row.id)} onReveal={target=>{void bridge.reveal(row.id,target).catch(e=>setError(errorText(e)));}}/>)}</div>
+          {pageCount>1&&<div className="file-pagination"><span>{currentPage*50+1}–{Math.min(filteredRows.length,currentPage*50+50)} / {filteredRows.length}개 · 압축은 전체 목록에 적용</span><div><button className="icon-button" aria-label="이전 영상 목록" disabled={currentPage===0} onClick={()=>setPage(currentPage-1)}><ChevronLeft size={16}/></button><button className="icon-button" aria-label="다음 영상 목록" disabled={currentPage===pageCount-1} onClick={()=>setPage(currentPage+1)}><ChevronRight size={16}/></button></div></div>}
           <button className="add-more" onClick={()=>void chooseFiles()} disabled={busy||!ready}><Plus size={15}/>영상이나 폴더를 더 놓으세요</button>
         </>}
         {dragging&&!busy&&<div className="drop-overlay"><ArrowDown size={30}/><strong>여기에 놓아주세요</strong></div>}
@@ -192,7 +201,7 @@ export default function App() {
         <fieldset className="quality-fieldset" disabled={busy}><legend>어느 쪽이 더 중요한가요?</legend><div className="quality-options">
           {goals.map(option=><label key={option.value} className={`quality-option ${settings.goal===option.value?'selected':''}`}><input type="radio" name="quality" value={option.value} checked={settings.goal===option.value} onChange={()=>changeSettings({goal:option.value,quality:option.quality,effort:option.effort})}/><span className="quality-label">{option.label}{option.value==='balanced'&&<span className="recommended">추천</span>}</span><span className="quality-description">{option.description}</span></label>)}
         </div></fieldset>
-        <label className="recommendation-toggle"><input type="checkbox" checked={settings.recommendation} disabled={busy} onChange={event=>changeSettings({recommendation:event.target.checked,...(event.target.checked?{acceleration:'auto'}:{})})}/><span>맞춤 추천 자동 적용<small>내 PC에서 짧게 비교하고, 영상마다 알맞은 설정으로</small></span></label>
+        <label className="recommendation-toggle"><input type="checkbox" checked={settings.recommendation} disabled={busy} onChange={event=>changeSettings({recommendation:event.target.checked,...(event.target.checked?{acceleration:'auto',effort:goals.find(goal=>goal.value===settings.goal)?.effort??'balanced'}:{})})}/><span>맞춤 추천 자동 적용<small>내 PC에서 짧게 비교하고, 영상마다 알맞은 설정으로</small></span></label>
         <p className="processing-note">{settings.recommendation?'시험 압축으로 처리 장치·압축 방식을 자동 선택':environment?`${deviceName}${settings.acceleration==='auto'&&gpu?' 우선':''} · 최대 ${concurrentLimit}개 동시 처리`:'GPU·CPU 자동 선택 · 동시 작업 자동'}</p>
         <details className="advanced"><summary>세부 설정<ChevronDown size={15}/></summary><div className="advanced-content">
           <label>압축 방식<select disabled={busy||settings.recommendation} value={settings.codec} onChange={event=>changeSettings({codec:event.target.value as Settings['codec']})}>
@@ -204,55 +213,64 @@ export default function App() {
           <label>처리 장치<select disabled={busy||settings.recommendation} value={settings.acceleration} onChange={event=>changeSettings({acceleration:event.target.value as Settings['acceleration']})}><option value="auto">자동 · GPU 우선</option><option value="cpu">CPU · 전체 코어 활용</option>{(['nvidia','intel','amd','apple'] as const).filter(backend=>environment?.gpuEncoders.some(encoder=>encoder.backend===backend)).map(backend=><option key={backend} value={backend}>GPU · {{nvidia:'NVIDIA',intel:'Intel',amd:'AMD',apple:'Apple'}[backend]}</option>)}</select></label>
           <label>처리 강도<select disabled={busy||settings.recommendation} value={settings.effort} onChange={event=>changeSettings({effort:event.target.value as Settings['effort']})}><option value="speed">최대 속도 · 용량 증가 가능</option><option value="balanced">균형</option><option value="efficiency">최대 효율 · 오래 걸림</option></select></label>
           <label>동시 작업<select disabled={busy} value={settings.parallelism} onChange={event=>changeSettings({parallelism:Number(event.target.value) as Settings['parallelism']})}><option value="0">자동</option><option value="1">1개씩</option><option value="2">2개</option><option value="4">4개</option></select></label>
+          <label className="checkbox-setting"><input type="checkbox" checked={settings.stripData} disabled={busy} onChange={event=>changeSettings({stripData:event.target.checked})}/><span>부가 데이터 트랙 제외<small>영상·음성·자막을 유지하고 GPS·타임코드 등의 데이터는 원본 파일에 보존합니다.</small></span></label>
           <p>직접 설정하려면 맞춤 추천을 꺼 주세요. 추천은 최대 18초 동안 완료된 후보를 비교하며, 짧은 영상·HDR·고비트 심도 영상은 기본 설정을 유지해요.</p>
           <p>H.265·AV1은 재생 앱의 코덱 지원이 필요할 수 있어요. 해상도와 프레임 타이밍을 유지하며, ‘화질 우선’도 손실 압축입니다.</p>
           <p>GPU를 사용할 수 없거나 색 정보 보존이 필요한 영상은 CPU로 처리해요. GPU가 표시되지 않으면 그래픽 드라이버를 확인해 주세요. GPU는 같은 화질에서 결과가 더 커질 수 있어요.</p>
         </div></details>
+        {hasData&&!settings.stripData&&<p className="configuration-warning" role="alert">부가 데이터가 있는 영상은 세부 설정의 ‘부가 데이터 트랙 제외’를 선택해 주세요.</p>}
         {!settings.recommendation&&hasHdr&&settings.codec!=='h265'&&<p className="configuration-warning" role="alert">HDR 영상의 색 정보를 보존하려면 세부 설정에서 H.265를 선택해 주세요.</p>}
         {!settings.recommendation&&desktop&&environment?.ready&&!codecAvailable&&<p className="configuration-warning" role="alert">현재 엔진이 선택한 압축 방식을 지원하지 않습니다. 세부 설정에서 다른 방식을 선택해 주세요.</p>}
       </section>
 
       <div className="destination"><Folder size={17}/><div><span className="destination-label">저장 위치</span><span className="destination-path" title={folder??'추가한 파일·폴더의 Compressed 폴더'}>{folder??(hasFolder?'선택한 폴더 / Compressed':'원본 폴더 / Compressed')}</span></div>{folder&&<button className="text-button reset-folder" disabled={busy} onClick={()=>setFolder(null)}>기본값</button>}<button className="text-button" onClick={()=>void changeFolder()} disabled={busy||!desktop}>변경</button></div>
+      <label className="archive-setting"><input type="checkbox" checked={settings.archiveOriginals} disabled={busy} onChange={event=>changeSettings({archiveOriginals:event.target.checked})}/><span>성공한 원본을 보관 폴더로 이동<small>결과: Results · 성공한 원본: Originals · 실패·취소·용량 이득 없음은 제자리에 유지</small></span></label>
+      {outcomes.warnings>0&&<p className="configuration-warning" role="status">보관·기록 확인이 필요한 영상 {outcomes.warnings}개 · 파일별 안내를 확인해 주세요.</p>}
       {hasFolder&&<p className="folder-output-hint">폴더로 추가한 영상은 하위 폴더 구조를 유지해 저장합니다.</p>}
 
       <footer className="action-area">
         <div className="result-summary" aria-live="polite">
           {busy?<><strong>{cancelling?'안전하게 멈추고 있어요':operation==='adding'?(importProgress?.stage==='scanning'?'폴더에서 영상을 찾고 있어요':'영상 정보를 확인하고 있어요'):operation==='estimate'?'예상 용량을 확인하고 있어요':'가벼워지는 중이에요'}</strong><span>{operation==='estimate'?'여러 구간을 짧게 시험 압축합니다.':operation==='adding'?(importProgress?.stage==='scanning'?`지금까지 ${importProgress.found}개 발견`:importProgress?`${importProgress.checked} / ${importProgress.found}개 확인`:'하위 폴더도 함께 확인합니다.'):`${batchFinished} / ${batchIds.length}개 처리${activeRows.length>1?` · ${activeRows.length}개 동시 압축`:active?` · ${active.name}`:''}`}</span></>:
           summary.percent!==null?<><strong className="success-text">{formatBytes(summary.original-summary.output)} 가벼워졌어요 <span className="savings-badge">{summary.percent.toFixed(1)}%</span></strong><span>완료한 영상의 실제 절감량{summary.complete?'':' · 나머지 파일은 목록에서 확인해 주세요'}</span></>:
-          <><strong>{candidates.length>0?`${candidates.length}개 영상, ${formatBytes(candidates.reduce((sum,row)=>sum+row.bytes,0))}`:'준비되면 가볍게 시작하세요'}</strong><span>원본 보존 · 서버 업로드 없음</span></>}
+          <><strong>{candidates.length>0?`${candidates.length}개 영상, ${formatBytes(candidates.reduce((sum,row)=>sum+row.bytes,0))}`:'준비되면 가볍게 시작하세요'}</strong><span>원본 안전 보관 · 서버 업로드 없음</span></>}
         </div>
         <div className="action-buttons">{busy?<button className="button button-secondary cancel-button" disabled={cancelling} onClick={()=>void cancel()}><X size={16}/>{cancelling?'취소 중…':'작업 취소'}</button>:<>
           <button className="button button-secondary" onClick={()=>void run('estimate')} disabled={!ready||pending.length===0||!configurationValid}>예상 용량 확인</button>
-          <button className="button button-primary" onClick={()=>void run('compress')} disabled={!ready||pending.length===0||!configurationValid}><ArrowDown size={17}/>{pending.length>0?`${pending.length}개 영상 압축`:'압축 시작'}</button>
+          <button className="button button-primary" onClick={()=>void run('compress')} disabled={!ready||(pending.length===0&&!rows.some(row=>row.blocked))||!configurationValid}><ArrowDown size={17}/>{pending.length>0?`${pending.length}개 영상 압축`:rows.some(row=>row.blocked)?'실패 목록 기록':'압축 시작'}</button>
         </>}</div>
       </footer>
       <p className="bottom-note">예상 용량은 시험 압축 결과이며, 실제 크기는 영상에 따라 달라집니다.</p>
     </main>
-    <div className="app-bottom"><span>드롭퍼</span><span>가벼워지는 작은 습관.</span><span>v0.2.3</span></div>
+    <div className="app-bottom"><span>드롭퍼</span><span>가벼워지는 작은 습관.</span><span>v0.2.4</span></div>
   </div>;
 }
 
 function toRow(item:FileItem):Row{return {...item,phase:'ready',progress:0};}
 
-function FileRow({row,operation,busy,onRemove,onReveal}:{row:Row;operation:Operation;busy:boolean;onRemove:()=>void;onReveal:()=>void}){
+function FileRow({row,stripData,operation,busy,onRemove,onReveal}:{row:Row;stripData:boolean;operation:Operation;busy:boolean;onRemove:()=>void;onReveal:(target?:'output'|'original'|'report')=>void}){
   const processing=row.phase==='processing';
   const output=row.phase==='done'?row.outputBytes:row.phase==='unchanged'?row.bytes:row.estimatedBytes;
   const actual=row.phase==='done'||row.phase==='unchanged';
   const reduction=output!==undefined&&row.bytes>0?(row.bytes-output)/row.bytes*100:null;
   const extension=row.name.split('.').pop()?.toUpperCase()??'영상';
   const issue=row.blocked??row.message;
+  const state=row.blocked?'처리 불가':({ready:'대기',processing:'진행 중',done:'성공',error:'실패',cancelled:'취소',unchanged:'원본 유지'} as const)[row.phase];
   return <article className={`file-row ${row.blocked||row.phase==='error'?'has-error':''}`}>
     <span className="file-icon" aria-hidden="true"><FileVideo2 size={23} strokeWidth={1.5}/></span>
-    <div className="file-main"><div className="file-title"><strong title={row.name}>{row.name}</strong>{row.hdr&&<span className="file-tag">{row.hdr}</span>}</div>
+    <div className="file-main"><div className="file-title"><strong title={row.name}>{row.name}</strong>{row.hdr&&<span className="file-tag">{row.hdr}</span>}<span className={`status-pill status-${row.blocked?'error':row.phase}`}>{state}</span></div>
       <div className="file-meta"><span>{extension}</span>{row.width>0&&<><span>{row.width} × {row.height}</span><span>{formatDuration(row.duration)}</span></>}{row.backend&&<span className="backend-label" title="영상 처리 장치">{row.backend}</span>}{row.folderName&&row.relativePath&&<span className="source-path" title={`${row.folderName}/${row.relativePath}`}>{row.folderName}/{row.relativePath}</span>}</div>
-      {processing?<div className="row-progress"><progress max={1} value={row.progress} aria-label={`${row.name} ${operation==='estimate'?'예상 용량 계산':'압축'} 진행률`}/><span>{operation==='estimate'?'시험 압축':'압축 중'} {Math.floor(row.progress*100)}%</span></div>:
+      {processing?<div className="row-progress"><progress max={1} value={row.progress} aria-label={`${row.name} ${operation==='estimate'?'예상 용량 계산':'압축'} 진행률`}/><span>{operation==='estimate'?'시험 압축':row.stage==='archiving'?'원본 보관 중':row.stage==='recommendation'?'맞춤 설정 확인':'압축 중'} {Math.floor(row.progress*100)}%</span></div>:
       issue?<p className={`row-message ${row.phase==='unchanged'?'muted':''}`}>{row.phase==='cancelled'?'작업 취소 · 원본 유지':issue}</p>:
       row.notes.length>0?<details className="file-details"><summary>트랙·변환 정보</summary>{row.notes.map(note=><p key={note}>{note}</p>)}</details>:null}
+      {(row.dataTracks?.length??0)>0&&<details className="file-details"><summary>부가 데이터 {row.dataTracks?.length}개 · {stripData?'압축본에서 제외':'제외 설정 필요'}</summary>{row.dataTracks?.map(track=><p key={track}>{track}</p>)}</details>}
+      {row.archivedPath&&<p className="row-archive-note">{row.originalMoved?'원본 보관 완료':'보관 사본 위치 · 원본 이동 확인 필요'}<span>{row.archivedPath}</span></p>}
+      {row.archiveWarning&&<p className="row-archive-warning" role="status">{row.archiveWarning}</p>}
       {row.backendNote&&row.phase!=='cancelled'&&row.phase!=='error'&&<p className="row-engine-note">{row.backendNote}</p>}
     </div>
     <div className="file-result"><div className="size-change"><span>{formatBytes(row.bytes)}</span>{output!==undefined&&<><ArrowRight size={12}/><strong>{!actual&&'약 '}{formatBytes(output)}</strong></>}</div>
       {reduction!==null?<span className={reduction>0?'reduction':'result-neutral'}>{actual?(row.phase==='unchanged'?'원본 유지':'실제 '):'예상 '}{row.phase!=='unchanged'&&(reduction>=0?`${reduction.toFixed(1)}% 감소`:`${Math.abs(reduction).toFixed(1)}% 증가`)}</span>:!processing&&!issue?<span className="estimate-prompt">예상 용량 확인 가능</span>:null}
-      {row.phase==='done'&&row.outputPath&&<button className="reveal-button" disabled={busy} onClick={onReveal}><FolderOpen size={12}/>폴더 열기<Check size={12}/></button>}
+      {row.phase==='done'&&row.outputPath&&<button className="reveal-button" disabled={busy} onClick={()=>onReveal()}><FolderOpen size={12}/>폴더 열기<Check size={12}/></button>}
+      {row.originalMoved&&row.archivedPath&&<button className="reveal-button" disabled={busy} onClick={()=>onReveal('original')}><FolderOpen size={12}/>원본 보관 폴더</button>}
     </div>
     <button className="icon-button remove-file" aria-label={`${row.name} 목록에서 제거`} disabled={busy} onClick={onRemove}><X size={16}/></button>
   </article>;

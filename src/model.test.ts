@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyEvent, applySettingsChange, batchProgress, invalidate, totals, pendingRows, type Row } from './model';
+import { applyEvent, applySettingsChange, outcomeCounts, matchesFilter, batchProgress, invalidate, totals, pendingRows, type Row } from './model';
 
 const row = (id: string, bytes: number): Row => ({id,version:1,name:`${id}.mp4`,bytes,duration:60,width:1920,height:1080,codec:'h264',hdr:null,audioCount:1,subtitleCount:0,requiresMkv:false,blocked:null,notes:[],phase:'ready',progress:0});
 
@@ -77,5 +77,21 @@ describe('작업 화면의 전체 진행률',()=>{
   it('추천 목표와 처리 강도 변경은 이전 예측을 무효화한다',()=>{
     const rows:Row[]=[{...row('a',100),phase:'done',estimatedBytes:20}];
     for(const change of [{goal:'speed' as const},{effort:'efficiency' as const},{recommendation:false}])expect(applySettingsChange(rows,change)[0].estimatedBytes).toBeUndefined();
+  });
+});
+
+describe('결과 정리와 실패 구분',()=>{
+  it('보관한 원본은 설정을 바꿔도 다시 대기 상태로 돌아가지 않는다',()=>{
+    const moved:Row={...row('a',100),phase:'done',originalMoved:true,archivedPath:'/Compressed/Originals/a.mp4',outputPath:'/Compressed/Results/a.mp4'};
+    expect(invalidate([moved])[0]).toEqual(moved);
+  });
+  it('성공과 분석 실패·압축 실패·원본 유지를 구분한다',()=>{
+    const rows:Row[]=[{...row('a',100),phase:'done'},{...row('b',100),phase:'error'},{...row('c',100),blocked:'손상'}, {...row('d',100),phase:'unchanged'},row('e',100)];
+    expect(outcomeCounts(rows)).toMatchObject({success:1,failed:2,kept:1,pending:1});
+    expect(rows.filter(value=>matchesFilter(value,'failed')).map(r=>r.id)).toEqual(['b','c']);
+  });
+  it('보관 실패도 성공한 압축 결과와 함께 남긴다',()=>{
+    const result=applyEvent([row('a',100)],{id:'a',runId:10,kind:'compress',phase:'done',progress:1,outputPath:'/out/a.mp4',outputBytes:50,originalMoved:false,archiveWarning:'권한 부족',reportPath:'/out/Dropper-results.csv'},10)[0];
+    expect(result.phase).toBe('done');expect(result.archiveWarning).toBe('권한 부족');expect(result.reportPath).toBe('/out/Dropper-results.csv');
   });
 });

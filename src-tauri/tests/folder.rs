@@ -25,6 +25,8 @@ fn recursively_collects_videos_in_stable_order_and_skips_other_files_and_results
     ] {
         touch(&root, name);
     }
+    dropper_lib::folder::mark_output(&root.join("Compressed")).unwrap();
+    dropper_lib::folder::mark_output(&root.join("여행/Compressed")).unwrap();
     let scan = scan(&root, None, &AtomicBool::new(false), &mut |_| {}).unwrap();
     let names: Vec<_> = scan
         .files
@@ -67,6 +69,7 @@ fn skips_custom_destination_and_stops_discovery_on_cancel() {
     for name in ["a.mp4", "b.mov", "results/root/old.mp4"] {
         touch(&root, name);
     }
+    dropper_lib::folder::mark_output(&root.join("results")).unwrap();
     let result = scan(
         &root,
         Some(&root.join("results")),

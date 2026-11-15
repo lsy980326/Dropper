@@ -37,6 +37,7 @@ fn library(base: &Path) -> (PathBuf, Vec<u8>) {
     }
     fs::create_dir(root.join("Compressed")).unwrap();
     fs::write(root.join("Compressed/existing.mp4"), b"USER RESULT").unwrap();
+    dropper_lib::folder::mark_output(&root.join("Compressed")).unwrap();
     fs::write(root.join("notes.txt"), b"KEEP").unwrap();
     (root.canonicalize().unwrap(), data)
 }
